@@ -1,6 +1,6 @@
 # Command Compressor for Agent 中文说明
 
-Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [JACO](https://arxiv.org/abs/2209.07775) 启发。它借鉴 JACO 学习哪些命令输出内容可以删除的思路，但采用离线规则学习以提高稳定性。当前版本只做了 claude code 适配。
+Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发。它借鉴 JACO 学习哪些命令输出内容可以删除的思路，但采用离线规则学习以提高稳定性。当前版本只做了 claude code 适配。
 
 注：本项目与 RTK 兼容，RTK 在于优化高频命令，CCA 是压缩长输出命令。
 
