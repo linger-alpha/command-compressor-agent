@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "framework": "command-compressor-agent",
+  "whitelist": [
+    "^\\s*(rtk|RTK_DISABLED=1\\s+rtk)\\b",
+    "^\\s*(cca|command-compressor-agent)\\b",
+    "^\\s*(git|yadm|gt)\\b",
+    "^\\s*gh\\s+(pr|issue|run|repo|release)\\b(?!.*\\s--(json|jq|template)\\b)",
+    "^\\s*glab\\s+(mr|issue|ci|pipeline|release)\\b",
+    "^\\s*(rg|grep|fd|find|ls|tree|diff|wc|cat|head|tail|sed)\\b(?!.*(>|>>|<|<<|\\$\\())",
+    "^\\s*(xxd|hexdump|od|strings|base64)\\b",
+    "^\\s*(sqlite3|duckdb)\\b.*\\s(\\.dump|\\.recover|\\.schema)\\b"
+  ],
+  "visual_diagnostic_passthrough": {
+    "description": "Outputs that encode image, board, pixel, contour, OCR, or visual-classification evidence should be kept intact. Dense visual diagnostics are often semantically carried by repetition and layout.",
+    "command_patterns": [
+      "\\b(chess|board|fen|image|pixel|pixels|PIL|pillow|opencv|cv2|ocr|screenshot|contour|silhouette)\\b",
+      "\\.(png|jpg|jpeg|webp|gif|bmp)\\b"
+    ],
+    "output_patterns": [
+      "\\bbinary silhouette\\b",
+      "\\bpiece shape\\b",
+      "\\bultra-sensitive piece detection\\b",
+      "\\boccupied square\\b",
+      "\\bcontour\\b",
+      "\\bpixel\\b",
+      "\\bgrid\\b",
+      "\\bchess\\b",
+      "\\bFEN\\b"
+    ]
+  },
+  "strong_rules": [
+    {
+      "rule_id": "progress_bar_strip",
+      "category": "strong",
+      "description": "Remove tqdm, download, upload, and block progress bars while retaining first/last samples and extracted metrics.",
+      "trigger_regex": "",
+      "output_regex": "(\\d{1,3}%\\||\\[[#=█>.\\s-]+\\]\\s*\\d{1,3}%|ETA|elapsed|remaining|it/s|B/s|MB/s|GB/s|Downloading|Extracting|Uploading|Receiving|Resolving)",
+      "keep_patterns": [
+        "\\b(ERROR|Error|error|WARNING|Warning|warning|FAILED|Failed|failed|Traceback|Exception|RuntimeError|CUDA out of memory|NaN|nan|inf)\\b",
+        "\\b(epoch|Epoch|step|Step|loss|accuracy|acc|f1|perplexity|eval|validation|checkpoint|saved)\\b",
+        ".*:\\d+(:\\d+)?"
+      ],
+      "strip_patterns": [
+        "^.*\\d{1,3}%\\|.*\\|\\s*\\d+/\\d+.*$",
+        "^.*\\[[#=█>.\\s-]+\\]\\s*\\d{1,3}%.*$",
+        "^\\s*\\d+/\\d+\\s*\\[[^\\]]+\\].*$",
+        "^.*\\b(Downloading|Extracting|Uploading|Receiving|Resolving)\\b.*(?:ETA|elapsed|remaining|B/s|MB/s|GB/s|it/s).*$"
+      ],
+      "keep_first_n": 12,
+      "keep_last_n": 32,
+      "max_lines": 120,
+      "priority": 100,
+      "enabled": true
+    },
+    {
+      "rule_id": "package_install_noise",
+      "category": "strong",
+      "description": "Remove package-manager progress chatter while keeping warnings, failures, and final installed summaries.",
+      "trigger_regex": "\\b(pip|pip3|uv|conda|mamba|npm\\s+install|pnpm\\s+install|yarn\\s+install|apt|apt-get|brew)\\b",
+      "output_regex": "\\b(Collecting|Downloading|Requirement already satisfied|Installing collected packages|added \\d+ packages|Resolving packages|Processing triggers)\\b",
+      "keep_patterns": [
+        "\\b(ERROR|Error|error|WARNING|Warning|warning|Successfully installed|installed|added \\d+ packages|removed|changed|vulnerabilities|conflict|ResolutionImpossible)\\b"
+      ],
+      "strip_patterns": [
+        "^\\s*Collecting\\s+\\S+.*$",
+        "^\\s*Downloading\\s+\\S+.*$",
+        "^\\s*Using cached\\s+\\S+.*$",
+        "^\\s*Requirement already satisfied:.*$",
+        "^\\s*Installing collected packages:.*$",
+        "^\\s*Resolving packages.*$",
+        "^\\s*Processing triggers for .*$",
+        "^\\s*Progress: resolved.*$"
+      ],
+      "keep_first_n": 10,
+      "keep_last_n": 30,
+      "max_lines": 120,
+      "priority": 90,
+      "enabled": true
+    },
+    {
+      "rule_id": "docker_layer_progress",
+      "category": "strong",
+      "description": "Remove Docker pull/build layer progress while keeping errors, image ids, cache hits, and final status.",
+      "trigger_regex": "\\b(docker|docker\\s+compose|podman)\\b",
+      "output_regex": "\\b(Pulling fs layer|Download complete|Extracting|Downloading \\[|CACHED|DONE|sha256:)\\b",
+      "keep_patterns": [
+        "\\b(ERROR|Error|error|failed|denied|unauthorized|manifest unknown|sha256:|Successfully built|Successfully tagged|DONE|CACHED)\\b"
+      ],
+      "strip_patterns": [
+        "^.*Pulling fs layer.*$",
+        "^.*Waiting.*$",
+        "^.*Downloading\\s+\\[.*\\].*$",
+        "^.*Extracting\\s+\\[.*\\].*$",
+        "^#\\d+\\s+\\[[^\\]]+\\]\\s+\\d+\\.\\d+s$"
+      ],
+      "keep_first_n": 12,
+      "keep_last_n": 36,
+      "max_lines": 140,
+      "priority": 80,
+      "enabled": true
+    }
+  ],
+  "weak_rules": [
+    {
+      "rule_id": "dl_training_static_keep",
+      "category": "weak",
+      "description": "Compress long deep-learning logs by keeping head/tail plus losses, metrics, checkpoints, warnings, and failures.",
+      "trigger_regex": "\\b(python|python3|accelerate|torchrun|deepspeed|train|finetune|evaluate|eval)\\b",
+      "output_regex": "(loss|epoch|Epoch|checkpoint|wandb:|CUDA|\\d{1,3}%\\|)",
+      "keep_patterns": [
+        "\\b(ERROR|Error|error|WARNING|Warning|warning|FAILED|Failed|failed)\\b",
+        "\\b(Traceback|Exception|RuntimeError|AssertionError|CUDA out of memory)\\b",
+        "\\b(success|Success|complete|Complete|finished|Finished|saved|checkpoint)\\b",
+        "\\b(epoch|Epoch|step|Step|loss|accuracy|acc|f1|perplexity|eval|validation)\\b",
+        ".*:\\d+(:\\d+)?"
+      ],
+      "strip_patterns": [
+        "^wandb:\\s+Syncing.*$",
+        "^wandb:\\s+View run.*$",
+        "^wandb:\\s+Find logs at.*$"
+      ],
+      "keep_first_n": 12,
+      "keep_last_n": 36,
+      "max_lines": 140,
+      "priority": 60,
+      "enabled": true
+    },
+    {
+      "rule_id": "generic_long_progress_static_keep",
+      "category": "weak",
+      "description": "Fallback for long progress-heavy outputs from unknown scripts.",
+      "trigger_regex": "",
+      "output_regex": "(Downloading|Extracting|Processing|\\d{1,3}%\\||\\[[=>.\\s-]+\\]\\s*\\d{1,3}%)",
+      "keep_patterns": [
+        "\\b(ERROR|Error|error|WARNING|Warning|warning|FAILED|Failed|failed|Traceback|Exception|complete|Complete|success|Success|saved|checkpoint)\\b",
+        ".*:\\d+(:\\d+)?"
+      ],
+      "strip_patterns": [
+        "^.*Downloading.*\\d{1,3}%.*$",
+        "^.*Extracting.*\\d{1,3}%.*$",
+        "^.*Processing.*\\d{1,3}%.*$",
+        "^\\s*\\[[=>.\\s-]+\\]\\s*\\d{1,3}%.*$",
+        "^\\s*\\d{1,3}%\\|.*$"
+      ],
+      "keep_first_n": 12,
+      "keep_last_n": 32,
+      "max_lines": 140,
+      "priority": 30,
+      "enabled": true
+    }
+  ]
+}

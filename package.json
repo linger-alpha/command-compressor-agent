@@ -1,0 +1,32 @@
+{
+  "name": "command-compressor-agent",
+  "version": "0.1.0",
+  "description": "PostToolUse command-output compression for coding agents.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "cca": "./bin/cca.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "rules",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/compressor.test.js && node test/cli.test.js",
+    "smoke": "node bin/cca.js status --json"
+  },
+  "keywords": [
+    "claude-code",
+    "coding-agent",
+    "compression",
+    "posttooluse",
+    "terminal"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
