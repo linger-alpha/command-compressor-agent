@@ -1,12 +1,14 @@
 # Command Compressor for Agent 中文说明
 
-Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 JACO/TACO-style 优化循环启发，当前版本只做了 claude code 适配。
+Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [JACO](https://arxiv.org/abs/2209.07775) 启发。它借鉴 JACO 学习哪些命令输出内容可以删除的思路，但采用离线规则学习以提高稳定性。当前版本只做了 claude code 适配。
 
 注：本项目与 RTK 兼容，RTK 在于优化高频命令，CCA 是压缩长输出命令。
 
 ## 当前状态
 
 本项目仍处于实验阶段。当前证据是积极但不充分的：我们已经观察到真实的 command-observation token 节省，并且在一个较小的 TerminalBench 2/TACO-style 样本中保持了平均分；但也观察到风险案例，即压缩可能改变 agent 轨迹，或暴露某些不适合压缩的输出类型。
+
+这里的 TACO 指的是借用 upstream multimodal-art-projection/TACO 项目中的评测风格：使用 Harbor 与 TerminalBench-style paired agent runs 做 A/B 对照。它是本项目的评测方式，不是 runtime 规则来源。
 
 因此当前默认发布策略优先保守和稳定，而不是追求最大压缩率：
 

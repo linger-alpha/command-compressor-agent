@@ -2,8 +2,9 @@
 
 Command Compressor for Agent (`cca`) is an experimental command-output
 compression layer for coding agents. The project is inspired by RTK and
-JACO/TACO-style optimization loops. The current version only supports Claude
-Code.
+[JACO](https://arxiv.org/abs/2209.07775). It borrows JACO's idea of learning
+which command-output content can be removed, but uses offline rule learning for
+stability. The current version only supports Claude Code.
 
 Note: this project is compatible with RTK. RTK focuses on optimizing frequent
 commands; CCA focuses on compressing commands with long outputs.
@@ -16,6 +17,10 @@ This project is experimental. The current evidence is encouraging but not final:
 we have seen real command-observation token savings and preserved mean score in
 a small TerminalBench 2/TACO-style sample, but we have also seen risk cases where
 compression changed the agent trajectory or exposed unsafe output classes.
+Here, TACO refers to the TACO-style evaluation setup used in the upstream
+multimodal-art-projection/TACO project: Harbor plus TerminalBench-style paired
+agent runs. It is an evaluation pattern for this project, not the source of the
+runtime rules.
 
 The default release therefore prioritizes safety over maximum compression:
 
