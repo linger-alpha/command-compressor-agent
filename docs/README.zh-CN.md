@@ -126,6 +126,11 @@ TerminalBench/TACO-style A/B 测试给出了积极信号：在排除一个 infra
 
 项目还需要在 TerminalBench、DeepSWE-style tasks 和其他 coding agents 上做更多重复端到端 A/B 测试。如果你发现某个任务中压缩带来了提升、损害或明显改变 agent 轨迹，欢迎分享 trace 和规则上下文，一起把安全边界做得更清楚。
 
+## Community
+
+Thanks to the [LINUX DO](https://linux.do/) community for providing a platform
+for communication and sharing.
+
 ## License
 
 MIT

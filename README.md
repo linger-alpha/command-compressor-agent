@@ -172,6 +172,11 @@ DeepSWE-style tasks, and other coding agents. If you find a task where
 compression improves, hurts, or changes the agent trajectory, please share the
 trace and rule context so the community can improve the safety boundary.
 
+## Community
+
+Thanks to the [LINUX DO](https://linux.do/) community for providing a platform
+for communication and sharing.
+
 ## License
 
 MIT
