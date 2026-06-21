@@ -1,6 +1,6 @@
 {
   "name": "@linger-alpha/cca",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "PostToolUse command-output compression for coding agents.",
   "license": "MIT",
   "type": "commonjs",

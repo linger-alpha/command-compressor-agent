@@ -2,9 +2,10 @@
 
 Command Compressor for Agent (`cca`) is an experimental command-output
 compression layer for coding agents. The project is inspired by RTK and
-[TACO](https://arxiv.org/abs/2604.19572). It borrows JACO's idea of learning
-which command-output content can be removed, but uses offline rule learning for
-stability. The current version only supports Claude Code.
+[TACO](https://arxiv.org/abs/2604.19572): it treats command-output compression
+as an agent-context optimization problem, then implements a conservative
+offline-rule runtime for stability. The current version only supports Claude
+Code.
 
 Note: this project is compatible with RTK. RTK focuses on optimizing frequent
 commands; CCA focuses on compressing commands with long outputs.
@@ -17,10 +18,10 @@ This project is experimental. The current evidence is encouraging but not final:
 we have seen real command-observation token savings and preserved mean score in
 a small TerminalBench 2/TACO-style sample, but we have also seen risk cases where
 compression changed the agent trajectory or exposed unsafe output classes.
-Here, TACO refers to the TACO-style evaluation setup used in the upstream
-multimodal-art-projection/TACO project: Harbor plus TerminalBench-style paired
-agent runs. It is an evaluation pattern for this project, not the source of the
-runtime rules.
+TACO is the main reference idea for this project and also motivates the
+TerminalBench-style paired A/B evaluation used here. CCA does not reuse TACO's
+full evolutionary runtime; it distills the idea into editable local rules and a
+Claude Code hook that favors stability.
 
 The default release therefore prioritizes safety over maximum compression:
 
@@ -122,7 +123,7 @@ The default rule file has four sections:
 - `strong_rules`: progress bars, ANSI/status noise, package install chatter,
   Docker layer progress, and high-repetition logs. These rules avoid semantic
   head/tail cutting.
-- `weak_rules`: longer JACO-style learned rules distilled from offline traces.
+- `weak_rules`: longer TACO-inspired learned rules distilled from offline traces.
   They keep head/tail plus important lines and are disabled by `low` strength.
   The release runtime does not do online learning by default.
 

@@ -4,22 +4,22 @@ English version: [technical-report.md](technical-report.md).
 
 ## 概要
 
-Command Compressor for Agent 是一个面向 coding agents 的实验性命令输出压缩系统，受 RTK 启发，基于[TACO](https://arxiv.org/abs/2604.19572)：通过删减命令输出中的无效信息（如进度条），节省 token 开销并让模型更“专注”，与 JACO 不同的是，我们的学习是离线的，这样更稳定也仍然有效。
+Command Compressor for Agent 是一个面向 coding agents 的实验性命令输出压缩系统，受 RTK 启发，基于 [TACO](https://arxiv.org/abs/2604.19572)：通过删减命令输出中的无效信息（如进度条），节省 token 开销并让模型更“专注”。CCA 将这一思路实现为离线规则学习和静态规则 runtime，以便在保留压缩效果的同时提高稳定性。
 
 当前版本聚焦 Claude Code，使用 `PostToolUse:Bash` hook：截流命令输出，当 CCA 判断压缩既有收益又相对安全时对输出进行压缩。
 
 ## 规则来源
 
-规则生成流程参考 JACO 的思路：先从 coding-agent 命令输出轨迹中收集 raw observations，再离线识别高频低价值模式，生成 candidate rules，最后通过 replay 和端到端 A/B 结果筛选进入 release rules。本轮规则主要来自两类训练/挖掘数据：
+规则生成流程参考 TACO 启发的压缩思路：先从 coding-agent 命令输出轨迹中收集 raw observations，再离线识别高频低价值模式，生成 candidate rules，最后通过 replay 和端到端 A/B 结果筛选进入 release rules。本轮规则主要来自两类训练/挖掘数据：
 
 - 外部公开命令轨迹数据集 TerminalTraj；
 - 与 coding Agent 的历史对话。
 
-规则被分为三类。第一类是白名单和透传规则，用来保护 `cat`、`ls`、`rg`、`grep`、`find`、`head`、`tail` 等查询命令，以及 visual、board、pixel、OCR、contour、silhouette、dense matrix 和 raw fallback read 这类高度重复但仍有价值的信息。第二类是强规则，主要面向进度条、ANSI/status 噪声、package install chatter、Docker layer progress 和高重复日志。第三类是弱规则，来自 JACO-style offline learning，主要对长训练日志和未知脚本中的进度型输出做 head/tail + important lines 保留。
+规则被分为三类。第一类是白名单和透传规则，用来保护 `cat`、`ls`、`rg`、`grep`、`find`、`head`、`tail` 等查询命令，以及 visual、board、pixel、OCR、contour、silhouette、dense matrix 和 raw fallback read 这类高度重复但仍有价值的信息。第二类是强规则，主要面向进度条、ANSI/status 噪声、package install chatter、Docker layer progress 和高重复日志。第三类是弱规则，来自 TACO-inspired offline learning，主要对长训练日志和未知脚本中的进度型输出做 head/tail + important lines 保留。
 
 ## 实验
 
-实验完全基于 JACO 训练得出，没有分强弱规则，release 的规则包含针对实验中遇到问题进行的改进。
+实验完全基于 TACO-inspired 离线规则学习流程得出，没有分强弱规则，release 的规则包含针对实验中遇到问题进行的改进。
 
 主要端到端实验使用 TerminalBench 2.0 tasks，采用 TACO-style paired A/B 设置，agent 为 Claude Code，模型为 `deepseek-v4-pro`。指标包括 validation score、estimated input tokens、cache-read input tokens、output tokens（reasoning 计入 output）、custom cost（价格口径为 input=3、output=6、cache-read=0.025）、hook responses、实际 `updatedToolOutput` events、raw fallback reads 和 tool-call differences。
 

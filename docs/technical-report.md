@@ -8,8 +8,9 @@ Command Compressor for Agent is an experimental command-output compression
 system for coding agents. It is inspired by RTK and based on
 [TACO](https://arxiv.org/abs/2604.19572): by removing low-value information
 from command output, such as progress bars, it saves token cost and helps the
-model stay more focused. Unlike JACO, our learning process is offline, which
-makes the system more stable while still keeping the useful effect.
+model stay more focused. CCA adapts that idea into an offline rule-learning and
+static-rule runtime, which makes the system more stable while still keeping the
+useful compression effect.
 
 The current version focuses on Claude Code and uses a `PostToolUse:Bash` hook:
 it intercepts command output and compresses the output when CCA decides that
@@ -17,11 +18,12 @@ compression is both useful and relatively safe.
 
 ## Rule Sources
 
-The rule generation process follows the idea of JACO: first collect raw
-observations from coding-agent command-output trajectories, then identify
-frequent low-value patterns offline, generate candidate rules, and finally
-filter them into release rules through replay and end-to-end A/B results. The
-rules in this round mainly come from two training/mining data sources:
+The rule generation process follows the TACO-inspired compression idea: first
+collect raw observations from coding-agent command-output trajectories, then
+identify frequent low-value patterns offline, generate candidate rules, and
+finally filter them into release rules through replay and end-to-end A/B
+results. The rules in this round mainly come from two training/mining data
+sources:
 
 - the external public command-trajectory dataset TerminalTraj;
 - historical conversations with coding agents.
@@ -33,13 +35,13 @@ contour, silhouette, dense matrix, and raw fallback read outputs. These outputs
 may be highly repetitive while still carrying valuable information. The second
 group is strong rules, mainly targeting progress bars, ANSI/status noise,
 package install chatter, Docker layer progress, and high-repetition logs. The
-third group is weak rules, which come from JACO-style offline learning and
+third group is weak rules, which come from TACO-inspired offline learning and
 mainly preserve head/tail plus important lines for long training logs and
 progress-heavy output from unknown scripts.
 
 ## Experiment
 
-The experiment was fully based on rules learned through the JACO-style process
+The experiment was fully based on rules learned through the TACO-inspired process
 and did not separate strong and weak rules. The release rules include
 improvements made for problems encountered during the experiment.
 

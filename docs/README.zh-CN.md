@@ -1,6 +1,6 @@
 # Command Compressor for Agent 中文说明
 
-Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发。它借鉴 JACO 学习哪些命令输出内容可以删除的思路，但采用离线规则学习以提高稳定性。当前版本只做了 claude code 适配。
+Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发：它将命令输出压缩视为 agent context optimization 问题，并采用保守的离线规则 runtime 来提高稳定性。当前版本只做了 claude code 适配。
 
 注：本项目与 RTK 兼容，RTK 在于优化高频命令，CCA 是压缩长输出命令。
 
@@ -8,7 +8,7 @@ Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性
 
 本项目仍处于实验阶段。当前证据是积极但不充分的：我们已经观察到真实的 command-observation token 节省，并且在一个较小的 TerminalBench 2/TACO-style 样本中保持了平均分；但也观察到风险案例，即压缩可能改变 agent 轨迹，或暴露某些不适合压缩的输出类型。
 
-这里的 TACO 指的是借用 upstream multimodal-art-projection/TACO 项目中的评测风格：使用 Harbor 与 TerminalBench-style paired agent runs 做 A/B 对照。它是本项目的评测方式，不是 runtime 规则来源。
+TACO 是本项目的主要参考思想，也启发了这里使用的 TerminalBench-style paired A/B 评测方式。CCA 没有复用 TACO 的完整自动进化 runtime，而是将其思想收敛为可编辑的本地规则和 Claude Code hook，优先保证稳定性。
 
 因此当前默认发布策略优先保守和稳定，而不是追求最大压缩率：
 
@@ -98,7 +98,7 @@ cca rules
 - `whitelist`：不应压缩的命令，包括 RTK、`cat`、`ls`、`rg`、`grep`、`find`、`head`、`tail` 等 inspection 命令。
 - `visual_diagnostic_passthrough`：image、chess-board、pixel、OCR、contour、silhouette 和 visual-classification 诊断输出。它们会直接透传，因为布局和重复本身常常承载关键信息。即使命令失败，这类输出也会透传，因为失败态视觉诊断可能正是恢复判断所需证据。
 - `strong_rules`：进度条、ANSI/status 噪声、包安装 chatter、Docker layer progress 和高重复日志。这些规则避免语义性的 head/tail 裁剪。
-- `weak_rules`：来自离线轨迹的 JACO-style 学习规则，会保留 head/tail
+- `weak_rules`：来自离线轨迹的 TACO-inspired 学习规则，会保留 head/tail
   和重要行。`low` 强度会禁用这些规则。发布 runtime 默认不做在线学习。
 
 raw fallback read 也会被白名单保护。读取已配置 raw 目录的命令，通常是 `.command-compressor-agent/raw`，不会被再次压缩。
