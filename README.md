@@ -2,7 +2,7 @@
 
 Command Compressor for Agent (`cca`) is an experimental command-output
 compression layer for coding agents. The project is inspired by RTK and
-[JACO](https://arxiv.org/abs/2209.07775). It borrows JACO's idea of learning
+[TACO](https://arxiv.org/abs/2604.19572). It borrows JACO's idea of learning
 which command-output content can be removed, but uses offline rule learning for
 stability. The current version only supports Claude Code.
 
