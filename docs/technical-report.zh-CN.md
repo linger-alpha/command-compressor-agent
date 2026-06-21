@@ -4,7 +4,7 @@ English version: [technical-report.md](technical-report.md).
 
 ## 概要
 
-Command Compressor for Agent 是一个面向 coding agents 的实验性命令输出压缩系统，受 RTK 启发，基于[JACO](https://arxiv.org/abs/2209.07775)：通过删减命令输出中的无效信息（如进度条），节省 token 开销并让模型更“专注”，与 JACO 不同的是，我们的学习是离线的，这样更稳定也仍然有效。
+Command Compressor for Agent 是一个面向 coding agents 的实验性命令输出压缩系统，受 RTK 启发，基于[TACO](https://arxiv.org/abs/2604.19572)：通过删减命令输出中的无效信息（如进度条），节省 token 开销并让模型更“专注”，与 JACO 不同的是，我们的学习是离线的，这样更稳定也仍然有效。
 
 当前版本聚焦 Claude Code，使用 `PostToolUse:Bash` hook：截流命令输出，当 CCA 判断压缩既有收益又相对安全时对输出进行压缩。
 
