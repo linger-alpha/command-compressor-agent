@@ -24,7 +24,7 @@ Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性
 从 npm 安装：
 
 ```bash
-npm install -g command-compressor-agent
+npm install -g @linger-alpha/cca
 ```
 
 全局安装 Claude Code hook：

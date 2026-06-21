@@ -37,6 +37,19 @@ async function capture(fn) {
   assert.strictEqual(third.code, 0);
   assert.strictEqual(JSON.parse(third.out).observations, 0);
 
+  const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "cca-env-config-"));
+  const oldConfigPath = process.env.CCA_CONFIG_PATH;
+  process.env.CCA_CONFIG_PATH = path.join(envDir, "config.json");
+  try {
+    const envStrength = await capture(() => main(["strength", "--json"]));
+    assert.strictEqual(envStrength.code, 0);
+    assert.strictEqual(JSON.parse(envStrength.out).strength, "default");
+    assert(fs.existsSync(path.join(envDir, "rules.json")), "CCA_CONFIG_PATH should keep rules beside the config file");
+  } finally {
+    if (oldConfigPath === undefined) delete process.env.CCA_CONFIG_PATH;
+    else process.env.CCA_CONFIG_PATH = oldConfigPath;
+  }
+
   const settings = path.join(dir, "settings.json");
   const fourth = await capture(() => main(["init", "--global", "--settings", settings, "--config", config, "--json"]));
   assert.strictEqual(fourth.code, 0);

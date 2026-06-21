@@ -1,11 +1,11 @@
 {
-  "name": "command-compressor-agent",
-  "version": "0.1.0",
+  "name": "@linger-alpha/cca",
+  "version": "0.1.1",
   "description": "PostToolUse command-output compression for coding agents.",
   "license": "MIT",
   "type": "commonjs",
   "bin": {
-    "cca": "./bin/cca.js"
+    "cca": "bin/cca.js"
   },
   "files": [
     "bin",

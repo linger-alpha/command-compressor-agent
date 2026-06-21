@@ -36,7 +36,7 @@ fallback reads.
 Install from npm:
 
 ```bash
-npm install -g command-compressor-agent
+npm install -g @linger-alpha/cca
 ```
 
 Install the Claude Code hook globally:

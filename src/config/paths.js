@@ -14,12 +14,17 @@ function userDir() {
   return path.join(os.homedir(), ".command-compressor-agent");
 }
 
+function defaultBaseDir() {
+  if (process.env.CCA_CONFIG_PATH) return path.dirname(process.env.CCA_CONFIG_PATH);
+  return userDir();
+}
+
 function defaultConfigPath() {
-  return process.env.CCA_CONFIG_PATH || path.join(userDir(), "config.json");
+  return process.env.CCA_CONFIG_PATH || path.join(defaultBaseDir(), "config.json");
 }
 
 function defaultRulesPath() {
-  return path.join(userDir(), "rules.json");
+  return path.join(defaultBaseDir(), "rules.json");
 }
 
 function bundledRulesPath() {
@@ -27,11 +32,11 @@ function bundledRulesPath() {
 }
 
 function defaultRawDir() {
-  return path.join(userDir(), "raw");
+  return path.join(defaultBaseDir(), "raw");
 }
 
 function defaultMetricsPath() {
-  return path.join(userDir(), "gain.jsonl");
+  return path.join(defaultBaseDir(), "gain.jsonl");
 }
 
 function defaultClaudeSettingsPath(scope = "global") {
@@ -119,6 +124,7 @@ function ensureUserConfig(options = {}) {
 
 module.exports = {
   bundledRulesPath,
+  defaultBaseDir,
   defaultClaudeSettingsPath,
   defaultConfig,
   defaultConfigPath,
