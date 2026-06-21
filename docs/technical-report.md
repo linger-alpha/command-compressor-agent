@@ -6,7 +6,7 @@ Chinese version: [technical-report.zh-CN.md](technical-report.zh-CN.md).
 
 Command Compressor for Agent is an experimental command-output compression
 system for coding agents. It is inspired by RTK and based on
-[JACO](https://arxiv.org/abs/2209.07775): by removing low-value information
+[TACO](https://arxiv.org/abs/2604.19572): by removing low-value information
 from command output, such as progress bars, it saves token cost and helps the
 model stay more focused. Unlike JACO, our learning process is offline, which
 makes the system more stable while still keeping the useful effect.
