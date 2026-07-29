@@ -1,9 +1,24 @@
 "use strict";
 
+const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const { defaultClaudeSettingsPath } = require("../config/paths");
+const {
+  defaultClaudeSettingsPath,
+  defaultCodexHooksPath,
+  defaultOpenCodePluginPath,
+  defaultPiExtensionPath,
+} = require("../config/paths");
+
+const AGENTS = ["claude-code", "codex", "opencode", "pi"];
+const CCA_MARKER = "command-compressor-agent managed";
+const EXECUTABLES = {
+  "claude-code": "claude",
+  codex: "codex",
+  opencode: "opencode",
+  pi: "pi",
+};
 
 function shQuote(value) {
   return `'${String(value).replace(/'/g, "'\"'\"'")}'`;
@@ -13,8 +28,9 @@ function hookScriptPath() {
   return path.resolve(__dirname, "..", "..", "bin", "cca-hook.js");
 }
 
-function hookCommand(configPath, nodePath = process.execPath || "node") {
-  return `CCA_CONFIG_PATH=${shQuote(configPath)} ${shQuote(nodePath)} ${shQuote(hookScriptPath())}`;
+function hookCommand(configPath, nodePath = process.execPath || "node", agent = "claude-code") {
+  const agentArg = agent === "claude-code" ? "" : ` ${shQuote(agent)}`;
+  return `CCA_CONFIG_PATH=${shQuote(configPath)} ${shQuote(nodePath)} ${shQuote(hookScriptPath())}${agentArg} # ${CCA_MARKER}`;
 }
 
 function loadSettings(settingsPath) {
@@ -32,39 +48,257 @@ function writeSettings(settingsPath, data) {
 }
 
 function installClaudeHook(options = {}) {
-  const scope = options.scope || "global";
-  const settingsPath = options.settingsPath || defaultClaudeSettingsPath(scope);
-  const command = hookCommand(options.configPath);
-  const data = loadSettings(settingsPath);
-  const hooks = ensureObject(data, "hooks");
-  const post = ensureArray(hooks, "PostToolUse");
-  const existing = post.find((entry) => entry && entry.matcher === "Bash");
-  const target = existing || { matcher: "Bash", hooks: [] };
-  target.hooks = Array.isArray(target.hooks) ? target.hooks.filter((hook) => !isCcaHook(hook)) : [];
-  const present = target.hooks.some((hook) => hook && hook.type === "command" && hook.command === command);
-  if (!present) target.hooks.push({ type: "command", command });
-  if (!existing) post.push(target);
-  writeSettings(settingsPath, data);
-  return { settingsPath, command, changed: !present };
+  return installJsonHook("claude-code", options);
+}
+
+function installCodexHook(options = {}) {
+  return installJsonHook("codex", options);
 }
 
 function uninstallClaudeHook(options = {}) {
+  return uninstallJsonHook("claude-code", options);
+}
+
+function uninstallCodexHook(options = {}) {
+  return uninstallJsonHook("codex", options);
+}
+
+function installJsonHook(agent, options = {}) {
   const scope = options.scope || "global";
-  const settingsPath = options.settingsPath || defaultClaudeSettingsPath(scope);
+  const settingsPath = options.settingsPath || targetPath(agent, scope, options);
+  const command = hookCommand(options.configPath, options.nodePath, agent);
+  const data = loadSettings(settingsPath);
+  const before = JSON.stringify(data);
+  const hooks = ensureObject(data, "hooks");
+  const post = ensureArray(hooks, "PostToolUse");
+  let target = post.find((entry) =>
+    entry && Array.isArray(entry.hooks) && entry.hooks.some((hook) => isCcaHook(hook))
+  );
+  if (!target) target = post.find((entry) => entry && /^(?:\^)?Bash(?:\$)?$/.test(String(entry.matcher || "")));
+  if (!target) {
+    target = { matcher: agent === "codex" ? "^Bash$" : "Bash", hooks: [] };
+    post.push(target);
+  }
+  target.hooks = Array.isArray(target.hooks) ? target.hooks.filter((hook) => !isCcaHook(hook)) : [];
+  const handler = { type: "command", command };
+  if (agent === "codex") {
+    handler.timeout = 30;
+    handler.statusMessage = "Compressing command output";
+  }
+  target.hooks.push(handler);
+  const changed = before !== JSON.stringify(data);
+  if (changed || !fs.existsSync(settingsPath)) writeSettings(settingsPath, data);
+  return {
+    agent,
+    scope,
+    settingsPath,
+    path: settingsPath,
+    command,
+    changed,
+    needsTrust: agent === "codex",
+  };
+}
+
+function uninstallJsonHook(agent, options = {}) {
+  const scope = options.scope || "global";
+  const settingsPath = options.settingsPath || targetPath(agent, scope, options);
+  if (!fs.existsSync(settingsPath)) return { agent, scope, settingsPath, path: settingsPath, changed: false };
   const data = loadSettings(settingsPath);
   const hooks = data.hooks;
-  if (!hooks || !Array.isArray(hooks.PostToolUse)) return { settingsPath, changed: false };
+  if (!hooks || !Array.isArray(hooks.PostToolUse)) {
+    return { agent, scope, settingsPath, path: settingsPath, changed: false };
+  }
   let changed = false;
   hooks.PostToolUse = hooks.PostToolUse.flatMap((entry) => {
-    if (!entry || entry.matcher !== "Bash" || !Array.isArray(entry.hooks)) return [entry];
+    if (!entry || !Array.isArray(entry.hooks)) return [entry];
     const kept = entry.hooks.filter((hook) => !isCcaHook(hook));
     if (kept.length !== entry.hooks.length) changed = true;
     return kept.length ? [{ ...entry, hooks: kept }] : [];
   });
   if (!hooks.PostToolUse.length) delete hooks.PostToolUse;
   if (!Object.keys(hooks).length) delete data.hooks;
-  writeSettings(settingsPath, data);
-  return { settingsPath, changed };
+  if (changed) writeSettings(settingsPath, data);
+  return { agent, scope, settingsPath, path: settingsPath, changed };
+}
+
+function installOpenCodePlugin(options = {}) {
+  return installOwnedFile("opencode", options, openCodePluginSource);
+}
+
+function uninstallOpenCodePlugin(options = {}) {
+  return uninstallOwnedFile("opencode", options);
+}
+
+function installPiExtension(options = {}) {
+  return installOwnedFile("pi", options, piExtensionSource);
+}
+
+function uninstallPiExtension(options = {}) {
+  return uninstallOwnedFile("pi", options);
+}
+
+function installOwnedFile(agent, options, sourceFactory) {
+  const scope = options.scope || "global";
+  const pathname = options.settingsPath || targetPath(agent, scope, options);
+  const source = sourceFactory(options.configPath);
+  if (fs.existsSync(pathname)) {
+    const existing = fs.readFileSync(pathname, "utf8");
+    if (!existing.includes(CCA_MARKER)) {
+      throw new Error(`Refusing to overwrite non-CCA file: ${pathname}`);
+    }
+    if (existing === source) return { agent, scope, path: pathname, changed: false };
+  }
+  fs.mkdirSync(path.dirname(pathname), { recursive: true });
+  fs.writeFileSync(pathname, source, "utf8");
+  return { agent, scope, path: pathname, changed: true };
+}
+
+function uninstallOwnedFile(agent, options = {}) {
+  const scope = options.scope || "global";
+  const pathname = options.settingsPath || targetPath(agent, scope, options);
+  if (!fs.existsSync(pathname)) return { agent, scope, path: pathname, changed: false };
+  const existing = fs.readFileSync(pathname, "utf8");
+  if (!existing.includes(CCA_MARKER)) {
+    return { agent, scope, path: pathname, changed: false, conflict: true };
+  }
+  fs.unlinkSync(pathname);
+  return { agent, scope, path: pathname, changed: true };
+}
+
+function openCodePluginSource(configPath) {
+  const adapterPath = path.resolve(__dirname, "opencode.js");
+  return [
+    `// ${CCA_MARKER}`,
+    'import { createRequire } from "node:module";',
+    "const require = createRequire(import.meta.url);",
+    `const { handleOpenCodeToolAfter } = require(${JSON.stringify(adapterPath)});`,
+    "",
+    "export const CommandCompressorAgent = async () => ({",
+    '  "tool.execute.after": async (input, output) => {',
+    `    handleOpenCodeToolAfter(input, output, { configPath: ${JSON.stringify(configPath)} });`,
+    "  },",
+    "});",
+    "",
+  ].join("\n");
+}
+
+function piExtensionSource(configPath) {
+  const adapterPath = path.resolve(__dirname, "pi.js");
+  return [
+    `// ${CCA_MARKER}`,
+    'import { createRequire } from "node:module";',
+    "const require = createRequire(import.meta.url);",
+    `const { handlePiToolResult } = require(${JSON.stringify(adapterPath)});`,
+    "",
+    "export default function commandCompressorAgent(pi) {",
+    '  pi.on("tool_result", async (event) =>',
+    `    handlePiToolResult(event, { configPath: ${JSON.stringify(configPath)} })`,
+    "  );",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function targetPath(agent, scope = "global", options = {}) {
+  if (agent === "claude-code") return defaultClaudeSettingsPath(scope, options);
+  if (agent === "codex") return defaultCodexHooksPath(scope, options);
+  if (agent === "opencode") return defaultOpenCodePluginPath(scope, options);
+  if (agent === "pi") return defaultPiExtensionPath(scope, options);
+  throw new Error(`Unsupported agent: ${agent}`);
+}
+
+function installAgent(agent, options = {}) {
+  if (agent === "claude-code") return installClaudeHook(options);
+  if (agent === "codex") return installCodexHook(options);
+  if (agent === "opencode") return installOpenCodePlugin(options);
+  if (agent === "pi") return installPiExtension(options);
+  throw new Error(`Unsupported agent: ${agent}`);
+}
+
+function uninstallAgent(agent, options = {}) {
+  if (agent === "claude-code") return uninstallClaudeHook(options);
+  if (agent === "codex") return uninstallCodexHook(options);
+  if (agent === "opencode") return uninstallOpenCodePlugin(options);
+  if (agent === "pi") return uninstallPiExtension(options);
+  throw new Error(`Unsupported agent: ${agent}`);
+}
+
+function isAgentInstalled(agent, options = {}) {
+  const scope = options.scope || "global";
+  const pathname = options.settingsPath || targetPath(agent, scope, options);
+  if (!fs.existsSync(pathname)) return false;
+  if (agent === "opencode" || agent === "pi") {
+    return fs.readFileSync(pathname, "utf8").includes(CCA_MARKER);
+  }
+  try {
+    const data = loadSettings(pathname);
+    return Boolean(
+      data.hooks &&
+      Array.isArray(data.hooks.PostToolUse) &&
+      data.hooks.PostToolUse.some((entry) =>
+        entry && Array.isArray(entry.hooks) && entry.hooks.some((hook) => isCcaHook(hook))
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function findExecutable(name, envPath = process.env.PATH || "") {
+  for (const directory of String(envPath).split(path.delimiter).filter(Boolean)) {
+    const pathname = path.join(directory, name);
+    try {
+      fs.accessSync(pathname, fs.constants.X_OK);
+      return pathname;
+    } catch {
+      // Continue searching PATH.
+    }
+  }
+  return null;
+}
+
+function commandOutput(executable, args) {
+  if (!executable) return { ok: false, output: "" };
+  const result = childProcess.spawnSync(executable, args, {
+    encoding: "utf8",
+    timeout: 10000,
+    shell: false,
+  });
+  return {
+    ok: !result.error && result.status === 0,
+    output: `${result.stdout || ""}${result.stderr || ""}`.trim(),
+  };
+}
+
+function detectAgent(agent, options = {}) {
+  const executable = (options.executables && options.executables[agent])
+    || findExecutable(EXECUTABLES[agent], options.envPath);
+  const versionResult = commandOutput(executable, ["--version"]);
+  let hooksSupported = true;
+  let hookSupport = "not-applicable";
+  if (agent === "codex" && executable) {
+    const features = commandOutput(executable, ["features", "list"]);
+    if (features.ok) {
+      hooksSupported = /^hooks\s+\S+\s+true\b/im.test(features.output);
+      hookSupport = hooksSupported ? "enabled" : "disabled-or-unavailable";
+    } else {
+      hooksSupported = false;
+      hookSupport = "unknown";
+    }
+  }
+  const installed = isAgentInstalled(agent, options);
+  return {
+    agent,
+    detected: Boolean(executable),
+    executable,
+    version: versionResult.output.split(/\r?\n/)[0] || null,
+    supported: Boolean(executable) && hooksSupported,
+    installed,
+    path: targetPath(agent, options.scope || "global", options),
+    hookSupport,
+    needsTrust: agent === "codex" && installed,
+    trustStatus: agent === "codex" && installed ? "review-required-or-unknown" : "not-applicable",
+  };
 }
 
 function ensureObject(data, key) {
@@ -86,8 +320,22 @@ function isCcaHook(hook) {
 }
 
 module.exports = {
+  AGENTS,
+  CCA_MARKER,
+  detectAgent,
+  findExecutable,
   hookCommand,
   hookScriptPath,
+  installAgent,
   installClaudeHook,
+  installCodexHook,
+  installOpenCodePlugin,
+  installPiExtension,
+  isAgentInstalled,
+  targetPath,
+  uninstallAgent,
   uninstallClaudeHook,
+  uninstallCodexHook,
+  uninstallOpenCodePlugin,
+  uninstallPiExtension,
 };

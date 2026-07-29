@@ -3,8 +3,14 @@
 const { ensureUserConfig, loadConfig, saveConfig } = require("./config/paths");
 const { listStrengthProfiles, normalizeStrength } = require("./config/strength");
 const { readGain, resetGain } = require("./evaluation/store");
-const { installClaudeHook, uninstallClaudeHook } = require("./takeover/install");
+const {
+  AGENTS,
+  detectAgent,
+  installAgent,
+  uninstallAgent,
+} = require("./takeover/install");
 const { runClaudeHook } = require("./takeover/claude-code");
+const { runCodexHook } = require("./takeover/codex");
 
 async function main(argv) {
   const command = argv[0] || "help";
@@ -13,6 +19,11 @@ async function main(argv) {
     await runClaudeHook();
     return 0;
   }
+  if (command === "hook" && argv[1] === "codex") {
+    await runCodexHook();
+    return 0;
+  }
+  if (command === "install") return install(argv.slice(1));
   if (command === "init") return init(argv.slice(1));
   if (command === "uninstall") return uninstall(argv.slice(1));
   if (command === "strength") return strength(argv.slice(1));
@@ -50,47 +61,113 @@ function parseFlags(args) {
 
 function init(args) {
   const flags = parseFlags(args);
-  const scope = flags.project ? "project" : "global";
+  const scope = parseScope(flags);
   const config = ensureUserConfig({
     configPath: flags.config,
     strength: flags.strength,
     rulesPath: flags.rules,
   });
-  const installed = installClaudeHook({
-    scope,
-    settingsPath: flags.settings,
-    configPath: config.configPath,
+  const detected = AGENTS.map((agent) => detectAgent(agent, { scope }));
+  const selected = detected.filter((entry) => entry.detected && entry.supported).map((entry) => entry.agent);
+  if (!selected.length) {
+    printJsonOrText(flags, {
+      status: "no-supported-agents-detected",
+      scope,
+      agents: Object.fromEntries(detected.map((entry) => [entry.agent, entry])),
+    }, ["No installed supported coding agent was detected."]);
+    return 1;
+  }
+  return installSelected(selected, flags, scope, config, detected);
+}
+
+function install(args) {
+  const flags = parseFlags(args);
+  const scope = parseScope(flags);
+  const selected = selectedAgents(flags);
+  if (!selected.length) {
+    process.stderr.write("Choose at least one agent: --claude-code, --codex, --opencode, or --pi.\n");
+    return 1;
+  }
+  const config = ensureUserConfig({
+    configPath: flags.config,
+    strength: flags.strength,
+    rulesPath: flags.rules,
   });
-  printJsonOrText(flags, {
-    status: "installed",
+  return installSelected(selected, flags, scope, config);
+}
+
+function installSelected(selected, flags, scope, config, detected = null) {
+  const agents = {};
+  let failed = false;
+  for (const agent of selected) {
+    try {
+      const result = installAgent(agent, {
+        scope,
+        configPath: config.configPath,
+        settingsPath: selected.length === 1 ? flags.settings : undefined,
+      });
+      agents[agent] = { status: "installed", ...result };
+    } catch (error) {
+      failed = true;
+      agents[agent] = {
+        status: "error",
+        error: error && error.message ? error.message : String(error),
+      };
+    }
+  }
+  const object = {
+    status: failed ? "partial" : "installed",
     scope,
-    settings: installed.settingsPath,
-    command: installed.command,
     config: config.configPath,
     rules: config.rulesPath,
     rawDir: config.rawDir,
     metrics: config.metricsPath,
     strength: config.strength,
-  }, [
-    `Installed command-compressor-agent for Claude Code (${scope}).`,
-    `settings: ${installed.settingsPath}`,
-    `config: ${config.configPath}`,
-    `rules: ${config.rulesPath}`,
-    `strength: ${config.strength}`,
-  ]);
-  return 0;
+    agents,
+  };
+  if (detected) {
+    object.detected = Object.fromEntries(detected.map((entry) => [entry.agent, entry]));
+  }
+  const lines = [`command-compressor-agent install (${scope}):`];
+  for (const [agent, result] of Object.entries(agents)) {
+    lines.push(`${agent}: ${result.status}${result.path ? ` (${result.path})` : `: ${result.error}`}`);
+    if (agent === "codex" && result.status === "installed") {
+      lines.push("codex: open /hooks to review and trust the installed hook.");
+    }
+  }
+  printJsonOrText(flags, object, lines);
+  return failed ? 1 : 0;
 }
 
 function uninstall(args) {
   const flags = parseFlags(args);
-  const scope = flags.project ? "project" : "global";
-  const removed = uninstallClaudeHook({ scope, settingsPath: flags.settings });
-  printJsonOrText(flags, { status: "uninstalled", scope, settings: removed.settingsPath, changed: removed.changed }, [
-    `Uninstalled command-compressor-agent hook (${scope}).`,
-    `settings: ${removed.settingsPath}`,
-    `changed: ${removed.changed}`,
+  const scope = parseScope(flags);
+  const selected = selectedAgents(flags);
+  const targets = selected.length ? selected : AGENTS;
+  const agents = {};
+  let failed = false;
+  for (const agent of targets) {
+    try {
+      const result = uninstallAgent(agent, {
+        scope,
+        settingsPath: targets.length === 1 ? flags.settings : undefined,
+      });
+      agents[agent] = { status: result.conflict ? "skipped-conflict" : "uninstalled", ...result };
+    } catch (error) {
+      failed = true;
+      agents[agent] = {
+        status: "error",
+        error: error && error.message ? error.message : String(error),
+      };
+    }
+  }
+  printJsonOrText(flags, { status: failed ? "partial" : "uninstalled", scope, agents }, [
+    `command-compressor-agent uninstall (${scope}):`,
+    ...Object.entries(agents).map(([agent, result]) =>
+      `${agent}: ${result.status}${result.changed == null ? "" : `, changed=${result.changed}`}`
+    ),
   ]);
-  return 0;
+  return failed ? 1 : 0;
 }
 
 function strength(args) {
@@ -132,13 +209,20 @@ function gain(args) {
 
 function status(args) {
   const flags = parseFlags(args);
+  const scope = parseScope(flags);
   const config = loadConfig(flags.config);
-  printJsonOrText(flags, config, [
+  const agents = Object.fromEntries(
+    AGENTS.map((agent) => [agent, detectAgent(agent, { scope })])
+  );
+  printJsonOrText(flags, { ...config, scope, agents }, [
     `config: ${config.configPath}`,
     `rules: ${config.rulesPath}`,
     `strength: ${config.strength}`,
     `rawDir: ${config.rawDir}`,
     `metrics: ${config.metricsPath}`,
+    ...Object.values(agents).map((agent) =>
+      `${agent.agent}: detected=${agent.detected}, installed=${agent.installed}, version=${agent.version || "unknown"}`
+    ),
   ]);
   return 0;
 }
@@ -153,13 +237,22 @@ function rules(args) {
 function help(code = 0) {
   process.stdout.write(`Command Compressor for Agent\n\n`);
   process.stdout.write(`Usage:\n`);
-  process.stdout.write(`  cca init --global [--strength default|high|xhigh|low]\n`);
+  process.stdout.write(`  cca install --claude-code|--codex|--opencode|--pi [--global|--project]\n`);
+  process.stdout.write(`  cca init [--global|--project] [--strength default|high|xhigh|low]\n`);
   process.stdout.write(`  cca strength [default|high|xhigh|low]\n`);
   process.stdout.write(`  cca gain [--json] [--reset]\n`);
-  process.stdout.write(`  cca status [--json]\n`);
-  process.stdout.write(`  cca uninstall --global\n`);
-  process.stdout.write(`  cca hook claude-code\n`);
+  process.stdout.write(`  cca status [--global|--project] [--json]\n`);
+  process.stdout.write(`  cca uninstall [--claude-code|--codex|--opencode|--pi] [--global|--project]\n`);
   return code;
+}
+
+function parseScope(flags) {
+  if (flags.global && flags.project) throw new Error("Choose only one scope: --global or --project.");
+  return flags.project ? "project" : "global";
+}
+
+function selectedAgents(flags) {
+  return AGENTS.filter((agent) => Boolean(flags[agent]));
 }
 
 function printJsonOrText(flags, object, lines) {
@@ -172,4 +265,5 @@ function printJsonOrText(flags, object, lines) {
 
 module.exports = {
   main,
+  parseFlags,
 };

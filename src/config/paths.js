@@ -39,9 +39,32 @@ function defaultMetricsPath() {
   return path.join(defaultBaseDir(), "gain.jsonl");
 }
 
-function defaultClaudeSettingsPath(scope = "global") {
-  if (scope === "project") return path.join(process.cwd(), ".claude", "settings.local.json");
-  return path.join(os.homedir(), ".claude", "settings.json");
+function scopeBase(scope, options = {}) {
+  return scope === "project"
+    ? (options.cwd || process.cwd())
+    : (options.homeDir || os.homedir());
+}
+
+function defaultClaudeSettingsPath(scope = "global", options = {}) {
+  const base = scopeBase(scope, options);
+  if (scope === "project") return path.join(base, ".claude", "settings.local.json");
+  return path.join(base, ".claude", "settings.json");
+}
+
+function defaultCodexHooksPath(scope = "global", options = {}) {
+  return path.join(scopeBase(scope, options), ".codex", "hooks.json");
+}
+
+function defaultOpenCodePluginPath(scope = "global", options = {}) {
+  const base = scopeBase(scope, options);
+  if (scope === "project") return path.join(base, ".opencode", "plugins", "command-compressor-agent.js");
+  return path.join(base, ".config", "opencode", "plugins", "command-compressor-agent.js");
+}
+
+function defaultPiExtensionPath(scope = "global", options = {}) {
+  const base = scopeBase(scope, options);
+  if (scope === "project") return path.join(base, ".pi", "extensions", "command-compressor-agent.ts");
+  return path.join(base, ".pi", "agent", "extensions", "command-compressor-agent.ts");
 }
 
 function defaultConfig(overrides = {}) {
@@ -126,9 +149,12 @@ module.exports = {
   bundledRulesPath,
   defaultBaseDir,
   defaultClaudeSettingsPath,
+  defaultCodexHooksPath,
   defaultConfig,
   defaultConfigPath,
   defaultMetricsPath,
+  defaultOpenCodePluginPath,
+  defaultPiExtensionPath,
   defaultRawDir,
   defaultRulesPath,
   ensureUserConfig,

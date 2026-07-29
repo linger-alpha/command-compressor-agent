@@ -1,30 +1,27 @@
 "use strict";
 
-const { compressObservation, failOpen, observationFromPayload } = require("../compression/compressor");
-const { loadConfig } = require("../config/paths");
-const { recordCompressionEvent } = require("../evaluation/store");
+const { objectOrEmpty } = require("../compression/utils");
+const {
+  commandFromInput,
+  compressForAdapter,
+  normalizedObservation,
+  normalizedResponse,
+  readStdin,
+} = require("./common");
 
-function readStdin() {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      raw += chunk;
-    });
-    process.stdin.on("end", () => resolve(raw));
-    process.stdin.on("error", reject);
+function observationFromClaude(payload) {
+  const response = normalizedResponse(payload.tool_response || payload.output || payload.tool_output);
+  return normalizedObservation({
+    command: commandFromInput(payload.tool_input || payload.input) || payload.command,
+    ...response,
+    agent: "claude-code",
+    toolName: payload.tool_name || "Bash",
   });
 }
 
 function handleClaudePostToolUse(payload, options = {}) {
-  const config = options.config || loadConfig(options.configPath);
-  const observation = observationFromPayload(payload);
-  const result = compressObservation(observation, {
-    rulesPath: config.rulesPath,
-    rawDir: config.rawDir,
-    strength: config.strength,
-  });
-  recordCompressionEvent(config, observation, result);
+  const observation = observationFromClaude(payload);
+  const result = compressForAdapter(observation, options);
 
   const hookOutput = {
     hookEventName: "PostToolUse",
@@ -40,7 +37,7 @@ function handleClaudePostToolUse(payload, options = {}) {
       `rules=${result.ruleIds.join("+")},`,
       `raw_ref=${result.rawRef}.`,
     ].join(" ");
-    const toolResponse = payload.tool_response && typeof payload.tool_response === "object" ? payload.tool_response : {};
+    const toolResponse = objectOrEmpty(payload.tool_response);
     hookOutput.updatedToolOutput = {
       stdout: result.text,
       stderr: "",
@@ -58,12 +55,18 @@ async function runClaudeHook() {
     process.stdout.write(`${JSON.stringify(handleClaudePostToolUse(payload))}\n`);
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
-    process.stdout.write(`${JSON.stringify(failOpen(message))}\n`);
+    process.stdout.write(`${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext: `command-compressor fail-open: ${message}`,
+      },
+    })}\n`);
   }
 }
 
 module.exports = {
   handleClaudePostToolUse,
+  observationFromClaude,
   readStdin,
   runClaudeHook,
 };

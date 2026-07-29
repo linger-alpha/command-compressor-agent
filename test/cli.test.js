@@ -51,11 +51,41 @@ async function capture(fn) {
   }
 
   const settings = path.join(dir, "settings.json");
-  const fourth = await capture(() => main(["init", "--global", "--settings", settings, "--config", config, "--json"]));
+  const fourth = await capture(() => main(["install", "--claude-code", "--global", "--settings", settings, "--config", config, "--json"]));
   assert.strictEqual(fourth.code, 0);
   const installed = JSON.parse(fourth.out);
-  assert(installed.command.includes(process.execPath), "hook command should use the absolute Node executable");
-  assert(installed.command.includes("cca-hook.js"), "hook command should call the bundled hook script");
+  assert(installed.agents["claude-code"].command.includes(process.execPath), "hook command should use the absolute Node executable");
+  assert(installed.agents["claude-code"].command.includes("cca-hook.js"), "hook command should call the bundled hook script");
+
+  const noAgent = await capture(() => main(["install", "--project", "--config", config, "--json"]));
+  assert.strictEqual(noAgent.code, 1, "explicit install requires an agent flag");
+
+  const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), "cca-auto-init-"));
+  const autoBin = path.join(autoDir, "bin");
+  fs.mkdirSync(autoBin);
+  for (const executable of ["claude", "codex", "opencode", "pi"]) {
+    const pathname = path.join(autoBin, executable);
+    const body = executable === "codex"
+      ? '#!/bin/sh\nif [ "$1" = "features" ]; then printf "hooks stable true\\n"; else printf "codex 1.0.0\\n"; fi\n'
+      : `#!/bin/sh\nprintf "${executable} 1.0.0\\n"\n`;
+    fs.writeFileSync(pathname, body, { encoding: "utf8", mode: 0o755 });
+  }
+  const oldPath = process.env.PATH;
+  const oldCwd = process.cwd();
+  process.env.PATH = autoBin;
+  process.chdir(autoDir);
+  try {
+    const auto = await capture(() => main(["init", "--project", "--config", path.join(autoDir, "cca.json"), "--json"]));
+    assert.strictEqual(auto.code, 0);
+    const initialized = JSON.parse(auto.out);
+    assert.deepStrictEqual(Object.keys(initialized.agents).sort(), ["claude-code", "codex", "opencode", "pi"]);
+    assert(fs.existsSync(path.join(autoDir, ".codex", "hooks.json")));
+    assert(fs.existsSync(path.join(autoDir, ".opencode", "plugins", "command-compressor-agent.js")));
+    assert(fs.existsSync(path.join(autoDir, ".pi", "extensions", "command-compressor-agent.ts")));
+  } finally {
+    process.chdir(oldCwd);
+    process.env.PATH = oldPath;
+  }
 
   console.log("cli tests passed");
 })().catch((error) => {
