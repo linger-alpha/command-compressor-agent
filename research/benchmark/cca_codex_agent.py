@@ -31,6 +31,7 @@ class CcaCodex(Codex):
         arm: str = "none",
         repo_root: str | None = None,
         baseline_commit: str = "7830b17",
+        current_commit: str | None = None,
         **kwargs,
     ):
         if arm not in ARMS:
@@ -40,6 +41,7 @@ class CcaCodex(Codex):
         self._cca_arm = arm
         self._cca_repo_root = Path(repo_root).expanduser().resolve()
         self._cca_baseline_commit = baseline_commit
+        self._cca_current_commit = current_commit
         super().__init__(*args, **kwargs)
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -113,6 +115,42 @@ class CcaCodex(Codex):
         if not (self._cca_repo_root / ".git").exists():
             raise ValueError(f"Not a Git repository: {self._cca_repo_root}")
         if self._cca_arm == "current":
+            if not self._cca_current_commit:
+                raise ValueError("current_commit is required for the current benchmark arm")
+            actual_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self._cca_repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if actual_commit != self._cca_current_commit:
+                raise ValueError(
+                    "Current benchmark source commit changed: "
+                    f"{actual_commit} != {self._cca_current_commit}"
+                )
+            runtime_changes = subprocess.run(
+                [
+                    "git",
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                    "--",
+                    "bin",
+                    "src",
+                    "rules",
+                    "package.json",
+                ],
+                cwd=self._cca_repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if runtime_changes:
+                raise ValueError(
+                    "Current benchmark runtime has uncommitted changes:\n"
+                    f"{runtime_changes}"
+                )
             bundle.mkdir(parents=True)
             for name in ("bin", "src", "rules"):
                 shutil.copytree(self._cca_repo_root / name, bundle / name)
@@ -210,6 +248,9 @@ class CcaCodex(Codex):
                 "arm": self._cca_arm,
                 "baseline_commit": self._cca_baseline_commit
                 if self._cca_arm == "legacy"
+                else None,
+                "current_commit": self._cca_current_commit
+                if self._cca_arm == "current"
                 else None,
                 "strength": "xhigh" if self._cca_arm != "none" else None,
             },

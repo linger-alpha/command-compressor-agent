@@ -7,6 +7,7 @@ This repository-only harness fixes the release experiment at:
 - tasks: `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`, and
   `log-summary-date-ranges`;
 - arms: no compression, Git `7830b17` (the 0.1.4 core), and the current core;
+- the current arm is pinned to the Git commit recorded in the generated plan;
 - four repeats per task and arm, for 48 trials total;
 - Codex CLI with `gpt-5.6-luna`, `max` reasoning, seed `20260729`, and one
   trial at a time.
@@ -47,6 +48,10 @@ Use `--trial build-cython-ext--current--r1` to select the current-hook arm
 explicitly.
 The runner persists state after every sequential trial. Results and temporary
 configs live under `research/jobs/`, which is excluded from Git and npm.
+If the current runtime commit differs from the plan, or `bin/`, `src/`,
+`rules/`, or `package.json` has uncommitted changes, the current arm refuses
+to run. Reports also reject older current-arm artifacts whose commit metadata
+does not match the plan.
 
 ## Report and release gate
 
@@ -64,8 +69,11 @@ compression-arm trial contains actual CCA hook observations.
 
 ## Bounded feasibility result
 
-On 2026-07-29, one matched `build-cython-ext` triplet completed with Codex CLI
-0.146.0:
+On 2026-07-29, three `build-cython-ext` repeats produced nine result artifacts
+with Codex CLI 0.146.0. Every verifier returned reward 1, but one result in each
+arm also carried an agent exception. A reward-positive result with
+`exception_info` is reported as passed but is excluded from matched token
+metrics. Only repeat 1 is therefore a clean matched triplet:
 
 | Arm | Reward | Exceptions | Input tokens | Hook observations | Hook-local output |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -84,6 +92,13 @@ triplet and its hook-local reduction was more conservative than the legacy
 arm. One sample cannot separate compression effects from trajectory variance,
 so it is evidence of hook feasibility rather than a compression win.
 
-Only 3 of the required 48 trials exist. The report therefore fails the token
-checks and the complete-trial check, and version 0.2.0 must not be released
-from this result.
+Across all three reward-positive results per arm, the input-token medians were
+3,556,308 for no compression, 2,459,443 for legacy, and 3,638,176 for the
+current pipeline. Those all-result medians are diagnostic only: repeat 2 had
+timeouts in the no-compression and current arms, while repeat 3 had a non-zero
+agent exit in the legacy arm. The report records two reward triplets as
+excluded by exceptions.
+
+Only 9 of the required 48 results exist, and only one triplet is cleanly
+matched. The report therefore fails the token checks and the complete-trial
+check, and version 0.2.0 must not be released from this result.

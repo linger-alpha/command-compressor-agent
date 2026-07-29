@@ -12,8 +12,10 @@ const {
   jobName,
   latestJobDirectory,
   makeJobConfig,
+  resultMatchesManifest,
   retryJobName,
   summarizeTrials,
+  trialCompleted,
 } = require("../cli");
 
 function successfulResult(inputTokens, hookObservations) {
@@ -29,6 +31,7 @@ function successfulResult(inputTokens, hookObservations) {
   const first = createManifest({ seed: 20260729, repeats: 4 });
   const second = createManifest({ seed: 20260729, repeats: 4 });
   assert.strictEqual(first.trials.length, 48);
+  assert.match(first.current_commit, /^[a-f0-9]{40}$/);
   assert.deepStrictEqual(
     first.trials.map((trial) => trial.id),
     second.trials.map((trial) => trial.id),
@@ -45,10 +48,12 @@ function successfulResult(inputTokens, hookObservations) {
   const config = makeJobConfig(first.trials[0], {
     jobsDir: "/tmp/cca-jobs",
     repoRoot: "/tmp/cca-repo",
+    currentCommit: first.current_commit,
   });
   assert.strictEqual(config.n_concurrent_trials, 1);
   assert.strictEqual(config.agents[0].model_name, "gpt-5.6-luna");
   assert.strictEqual(config.agents[0].kwargs.reasoning_effort, "max");
+  assert.strictEqual(config.agents[0].kwargs.current_commit, first.current_commit);
   assert.strictEqual(config.datasets[0].name, "terminal-bench/terminal-bench-2-1");
   assert.strictEqual(config.datasets[0].ref, "latest");
   assert.deepStrictEqual(config.datasets[0].task_names, [
@@ -64,6 +69,16 @@ function successfulResult(inputTokens, hookObservations) {
     stats: { n_trials: 1, n_errors: 1 },
   }), false, "an errored Harbor job must not be recorded as completed");
   assert.strictEqual(harborResultSucceeded(null), false);
+  assert.strictEqual(resultMatchesManifest(
+    { arm: "current" },
+    { cca_arm_metadata: { arm: "current", current_commit: first.current_commit } },
+    first
+  ).matches, true);
+  assert.strictEqual(resultMatchesManifest(
+    { arm: "current" },
+    { cca_arm_metadata: { arm: "current", current_commit: "0".repeat(40) } },
+    first
+  ).matches, false);
 
   const retryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cca-benchmark-test-"));
   try {
@@ -87,13 +102,33 @@ function successfulResult(inputTokens, hookObservations) {
   assert.strictEqual(report.release_gate.passed, true);
   assert.strictEqual(report.matched_successful_triplets, 16);
   assert.strictEqual(report.by_arm.current.passed, 16);
+  assert.strictEqual(report.by_arm.current.completed, 16);
   assert(report.input_token_reduction.current_vs_none >= 0.1);
   assert(report.input_token_reduction.current_vs_legacy >= 0.05);
 
-  results.delete(first.trials[0].id);
+  const missingTrial = first.trials[0];
+  results.delete(missingTrial.id);
   const partial = summarizeTrials(first, results);
   assert.strictEqual(partial.release_gate.passed, false);
   assert.strictEqual(partial.release_gate.checks.all_48_trials_present, false);
+
+  const erroredButRewarded = new Map(results);
+  const completedTrial = first.trials.find((trial) =>
+    erroredButRewarded.has(trial.id) &&
+    (trial.task !== missingTrial.task || trial.repeat !== missingTrial.repeat)
+  );
+  erroredButRewarded.set(completedTrial.id, {
+    ...erroredButRewarded.get(completedTrial.id),
+    exception_info: { exception_type: "AgentTimeoutError" },
+  });
+  const erroredReport = summarizeTrials(first, erroredButRewarded);
+  assert.strictEqual(trialCompleted(erroredButRewarded.get(completedTrial.id)), false);
+  assert.strictEqual(
+    erroredReport.matched_successful_triplets,
+    14,
+    "the earlier deleted trial and the errored reward must not enter matched token metrics"
+  );
+  assert.strictEqual(erroredReport.matched_reward_triplets_excluded_by_exception, 1);
 
   process.stdout.write("benchmark tests passed\n");
 })();

@@ -43,6 +43,8 @@ async function main(argv = process.argv.slice(2)) {
     print(makeJobConfig(trial, {
       jobsDir: path.resolve(flags["jobs-dir"] || defaultJobsDir()),
       repoRoot: REPO_ROOT,
+      baselineCommit: manifest.baseline_commit,
+      currentCommit: manifest.current_commit,
     }));
     return 0;
   }
@@ -64,6 +66,7 @@ async function main(argv = process.argv.slice(2)) {
 function createManifest(options = {}) {
   const seed = Number(options.seed == null ? DEFAULT_SEED : options.seed);
   const repeats = Number(options.repeats == null ? DEFAULT_REPEATS : options.repeats);
+  const currentCommit = String(options.currentCommit || currentRepoCommit(REPO_ROOT));
   if (!Number.isInteger(seed) || seed < 0) throw new Error("seed must be a non-negative integer");
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error("repeats must be a positive integer");
   const trials = [];
@@ -85,11 +88,12 @@ function createManifest(options = {}) {
     trial.order = index + 1;
   });
   return {
-    schema_version: 1,
+    schema_version: 2,
     dataset: "terminal-bench/terminal-bench-2-1@latest",
     model: "gpt-5.6-luna",
     reasoning_effort: "max",
     baseline_commit: "7830b17",
+    current_commit: currentCommit,
     seed,
     repeats,
     concurrency: 1,
@@ -123,7 +127,8 @@ function makeJobConfig(trial, options = {}) {
       kwargs: {
         arm: trial.arm,
         repo_root: repoRoot,
-        baseline_commit: "7830b17",
+        baseline_commit: options.baselineCommit || "7830b17",
+        current_commit: options.currentCommit || currentRepoCommit(repoRoot),
         reasoning_effort: "max",
       },
     }],
@@ -163,12 +168,18 @@ function runManifest(planPath, flags = {}) {
     if (
       previous &&
       previous.status === "completed" &&
-      harborJobSucceeded(path.join(jobsDir, previous.job_name))
+      harborJobSucceeded(path.join(jobsDir, previous.job_name)) &&
+      jobMatchesManifest(path.join(jobsDir, previous.job_name), trial, manifest)
     ) {
       continue;
     }
     if (attempted >= maxTrials) break;
-    const config = makeJobConfig(trial, { jobsDir, repoRoot: REPO_ROOT });
+    const config = makeJobConfig(trial, {
+      jobsDir,
+      repoRoot: REPO_ROOT,
+      baselineCommit: manifest.baseline_commit,
+      currentCommit: manifest.current_commit,
+    });
     const priorAttempt = previous ? numberOr(previous.attempt, 1) : 0;
     const attempt = priorAttempt + 1;
     config.job_name = retryJobName(trial, attempt);
@@ -211,13 +222,29 @@ function runManifest(planPath, flags = {}) {
 
 function reportFromJobs(manifest, jobsDir) {
   const results = new Map();
+  const stale = [];
   for (const trial of manifest.trials) {
     const jobDir = latestJobDirectory(jobsDir, trial);
     if (!jobDir) continue;
     const result = loadTrialResult(jobDir);
-    if (result) results.set(trial.id, withArtifactFacts(result, jobDir));
+    if (!result) continue;
+    const enriched = withArtifactFacts(result, jobDir);
+    const compatibility = resultMatchesManifest(trial, enriched, manifest);
+    if (compatibility.matches) {
+      results.set(trial.id, enriched);
+    } else {
+      stale.push({
+        trial_id: trial.id,
+        job_dir: jobDir,
+        reason: compatibility.reason,
+      });
+    }
   }
-  return summarizeTrials(manifest, results);
+  return {
+    ...summarizeTrials(manifest, results),
+    stale_results: stale.length,
+    stale_result_details: stale,
+  };
 }
 
 function summarizeTrials(manifest, results) {
@@ -228,6 +255,7 @@ function summarizeTrials(manifest, results) {
     results: 0,
     errors: 0,
     passed: 0,
+    completed: 0,
     input_tokens: [],
     hook_observations: 0,
     hook_trials: 0,
@@ -239,6 +267,7 @@ function summarizeTrials(manifest, results) {
     stats.results += 1;
     if (result.exception_info) stats.errors += 1;
     if (trialPassed(result)) stats.passed += 1;
+    if (trialCompleted(result)) stats.completed += 1;
     const tokens = Number(result.agent_result && result.agent_result.n_input_tokens);
     if (Number.isFinite(tokens) && tokens > 0) stats.input_tokens.push(tokens);
     const observations = Number(result.cca_hook_observations || 0);
@@ -251,6 +280,7 @@ function summarizeTrials(manifest, results) {
   }
 
   const matched = [];
+  let matchedExcludedByException = 0;
   for (const task of TASKS) {
     for (let repeat = 1; repeat <= manifest.repeats; repeat += 1) {
       const group = Object.fromEntries(ARMS.map((arm) => {
@@ -258,6 +288,10 @@ function summarizeTrials(manifest, results) {
         return [arm, results.get(id)];
       }));
       if (!ARMS.every((arm) => group[arm] && trialPassed(group[arm]))) continue;
+      if (!ARMS.every((arm) => trialCompleted(group[arm]))) {
+        matchedExcludedByException += 1;
+        continue;
+      }
       const tokens = Object.fromEntries(ARMS.map((arm) => [
         arm,
         Number(group[arm].agent_result && group[arm].agent_result.n_input_tokens),
@@ -291,11 +325,14 @@ function summarizeTrials(manifest, results) {
     dataset: manifest.dataset,
     model: manifest.model,
     reasoning_effort: manifest.reasoning_effort,
+    baseline_commit: manifest.baseline_commit,
+    current_commit: manifest.current_commit || null,
     seed: manifest.seed,
     planned_trials: manifest.trials.length,
     observed_results: results.size,
     by_arm: byArm,
     matched_successful_triplets: matched.length,
+    matched_reward_triplets_excluded_by_exception: matchedExcludedByException,
     matched_input_token_medians: matchedMedians,
     input_token_reduction: {
       current_vs_none: reductionVsNone,
@@ -312,10 +349,43 @@ function withArtifactFacts(result, jobDir) {
   const copy = { ...result };
   const trialDir = firstTrialDirectory(jobDir);
   const gainPath = trialDir && path.join(trialDir, "artifacts", "cca-gain.jsonl");
+  const armPath = trialDir && path.join(trialDir, "artifacts", "cca-arm.json");
   copy.cca_hook_observations = gainPath && fs.existsSync(gainPath)
     ? fs.readFileSync(gainPath, "utf8").split(/\r?\n/).filter(Boolean).length
     : 0;
+  copy.cca_arm_metadata = armPath && fs.existsSync(armPath)
+    ? readJson(armPath)
+    : null;
   return copy;
+}
+
+function jobMatchesManifest(jobDir, trial, manifest) {
+  const result = loadTrialResult(jobDir);
+  if (!result) return false;
+  return resultMatchesManifest(
+    trial,
+    withArtifactFacts(result, jobDir),
+    manifest
+  ).matches;
+}
+
+function resultMatchesManifest(trial, result, manifest) {
+  const metadata = result && result.cca_arm_metadata;
+  if (!metadata || metadata.arm !== trial.arm) {
+    return { matches: false, reason: "missing-or-mismatched-arm-metadata" };
+  }
+  if (trial.arm === "legacy" && metadata.baseline_commit !== manifest.baseline_commit) {
+    return { matches: false, reason: "baseline-commit-mismatch" };
+  }
+  if (trial.arm === "current") {
+    if (!manifest.current_commit) {
+      return { matches: false, reason: "manifest-missing-current-commit" };
+    }
+    if (metadata.current_commit !== manifest.current_commit) {
+      return { matches: false, reason: "current-commit-mismatch" };
+    }
+  }
+  return { matches: true, reason: null };
 }
 
 function loadTrialResult(jobDir) {
@@ -384,8 +454,15 @@ function trialPassed(result) {
   return Number(preferred) >= 1;
 }
 
+function trialCompleted(result) {
+  return trialPassed(result) && !result.exception_info;
+}
+
 function validateManifest(manifest) {
   if (!manifest || !Array.isArray(manifest.trials)) throw new Error("Invalid benchmark manifest");
+  if (!/^[a-f0-9]{40}$/.test(String(manifest.current_commit || ""))) {
+    throw new Error("Benchmark manifest must pin current_commit; regenerate the plan");
+  }
   const expected = TASKS.length * ARMS.length * Number(manifest.repeats);
   if (manifest.trials.length !== expected) {
     throw new Error(`Expected ${expected} trials, found ${manifest.trials.length}`);
@@ -424,6 +501,14 @@ function reduction(baseline, current) {
   return Number.isFinite(baseline) && baseline > 0 && Number.isFinite(current)
     ? (baseline - current) / baseline
     : null;
+}
+
+function currentRepoCommit(repoRoot) {
+  return childProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
 }
 
 function jobName(trial) {
@@ -521,7 +606,9 @@ module.exports = {
   makeJobConfig,
   median,
   reportFromJobs,
+  resultMatchesManifest,
   retryJobName,
   summarizeTrials,
+  trialCompleted,
   trialPassed,
 };
