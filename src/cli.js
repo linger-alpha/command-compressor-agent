@@ -133,6 +133,7 @@ function installSelected(selected, flags, scope, config, detected = null) {
     lines.push(`${agent}: ${result.status}${result.path ? ` (${result.path})` : `: ${result.error}`}`);
     if (agent === "codex" && result.status === "installed") {
       lines.push("codex: open /hooks to review and trust the installed hook.");
+      lines.push(`codex: warning: ${result.warning}`);
     }
   }
   printJsonOrText(flags, object, lines);

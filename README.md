@@ -5,7 +5,9 @@ compression layer for coding agents. The project is inspired by RTK and
 [TACO](https://arxiv.org/abs/2604.19572): it treats command-output compression
 as an agent-context optimization problem, then implements a conservative
 offline-rule runtime for stability. The current version supports Claude Code,
-Codex CLI, stable OpenCode, and Pi.
+stable OpenCode, and Pi. A conditional Codex CLI adapter is available for
+explicit installation, but it is not auto-installed because current Codex
+code mode ignores model-visible `PostToolUse` replacements.
 
 Note: this project is compatible with RTK. RTK focuses on optimizing frequent
 commands; CCA focuses on compressing commands with long outputs.
@@ -25,7 +27,7 @@ Claude Code hook that favors stability.
 
 The current runtime therefore prioritizes recoverability and block-level safety:
 
-- use `PostToolUse` instead of command rewriting,
+- use post-tool replacement instead of command rewriting,
 - compress only when the result is shorter,
 - keep a `raw_ref` fallback,
 - preserve encoded, visual, dense-semantic, traceback, and failure blocks,
@@ -44,8 +46,9 @@ Install from npm:
 npm install -g @linger-alpha/cca
 ```
 
-Auto-detect all installed supported agents and install their integrations
-globally:
+Auto-detect all installed fully supported agents and install their integrations
+globally. Codex is currently skipped because its mainstream code-mode path
+does not expose a reliable replacement surface:
 
 ```bash
 cca init --global
@@ -61,9 +64,12 @@ cca install --pi --global
 ```
 
 Use `--project` instead of `--global` for a repository-local installation.
-Codex hooks require an explicit review in `/hooks`; CCA never bypasses that
-trust step during a normal install. OpenCode v2 beta is not supported by this
-release.
+Explicit Codex installation is conditional: the hook works only when Codex
+uses its ordinary function-tool result path. Codex code mode executes the hook
+but returns the original result to the model. The installer reports this
+limitation, and hooks still require an explicit review in `/hooks`; CCA never
+bypasses that trust step during a normal install. OpenCode v2 beta is not
+supported by this release.
 
 Check the current configuration:
 
@@ -99,12 +105,13 @@ cca uninstall --global
 `cca` has three release-runtime layers and performs no network or model calls.
 
 The takeover layer integrates with each agent's post-tool lifecycle. Claude
-Code receives `updatedToolOutput`; Codex receives `continue: false` with
-compressed `stopReason` feedback; stable OpenCode mutates the
+Code receives `updatedToolOutput`; the conditional Codex adapter returns
+`continue: false` with compressed `stopReason` feedback; stable OpenCode mutates the
 `tool.execute.after` output; and Pi replaces `tool_result.content` while
 preserving `details` and `isError`. Every adapter normalizes to the same
 `{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
-an exception.
+an exception. A real Codex 0.146.0 + Luna probe confirmed that code mode ignores
+the returned `stopReason`, so Codex is not counted as fully supported.
 
 The compression layer first exempts RTK, inspection/read commands, and raw
 fallback reads. It removes ANSI control sequences, splits the remaining output
@@ -188,7 +195,8 @@ rules kept visible and editable. The old strength labels no longer change
 runtime behavior.
 
 The project needs more repeated end-to-end A/B tests across TerminalBench,
-DeepSWE-style tasks, and other coding agents. If you find a task where
+DeepSWE-style tasks, and other coding agents, plus a model-visible output
+replacement surface for Codex code mode. If you find a task where
 compression improves, hurts, or changes the agent trajectory, please share the
 trace and rule context so the community can improve the safety boundary.
 

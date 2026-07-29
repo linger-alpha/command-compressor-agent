@@ -156,10 +156,22 @@ const init = run(process.execPath, [
 ]);
 const initResult = JSON.parse(init.stdout);
 assert.equal(initResult.status, "installed");
-for (const agent of ["claude-code", "codex", "opencode", "pi"]) {
+for (const agent of ["claude-code", "opencode", "pi"]) {
   assert.equal(initResult.agents[agent].status, "installed", `${agent} was not installed`);
   assert.equal(initResult.detected[agent].detected, true, `${agent} was not detected`);
 }
+assert.equal(initResult.detected.codex.detected, true, "codex was not detected");
+assert.equal(initResult.detected.codex.supported, false);
+assert.equal(initResult.detected.codex.replacementSupport, "function-tool-mode-only");
+
+const codexInstall = JSON.parse(run(process.execPath, [
+  path.join(repoRoot, "bin", "cca.js"),
+  "install",
+  "--codex",
+  "--global",
+  "--json",
+]).stdout);
+assert.match(codexInstall.agents.codex.warning, /not model-visible in code mode/i);
 
 const secondInit = JSON.parse(run(process.execPath, [
   path.join(repoRoot, "bin", "cca.js"),
@@ -167,9 +179,17 @@ const secondInit = JSON.parse(run(process.execPath, [
   "--global",
   "--json",
 ]).stdout);
-for (const agent of ["claude-code", "codex", "opencode", "pi"]) {
+for (const agent of ["claude-code", "opencode", "pi"]) {
   assert.equal(secondInit.agents[agent].changed, false, `${agent} install was not idempotent`);
 }
+const secondCodexInstall = JSON.parse(run(process.execPath, [
+  path.join(repoRoot, "bin", "cca.js"),
+  "install",
+  "--codex",
+  "--global",
+  "--json",
+]).stdout);
+assert.equal(secondCodexInstall.agents.codex.changed, false, "codex install was not idempotent");
 
 const paths = {
   claude: path.join(home, ".claude", "settings.json"),
@@ -307,6 +327,8 @@ for (const agent of ["claude-code", "codex", "opencode", "pi"]) {
   assert.equal(status.agents[agent].installed, true);
 }
 assert.equal(status.agents.codex.trustStatus, "review-required-or-unknown");
+assert.equal(status.agents.codex.supported, false);
+assert.equal(status.agents.codex.replacementSupport, "function-tool-mode-only");
 
 const metrics = fs.readFileSync(path.join(path.dirname(configPath), "gain.jsonl"), "utf8")
   .split(/\r?\n/)
@@ -362,7 +384,8 @@ process.stdout.write(`${JSON.stringify({
   },
   replacement: {
     claude_code: "passed",
-    codex: "passed",
+    codex_hook_process_output: "passed",
+    codex_model_visible: "not-tested-by-this-smoke",
     opencode: "passed",
     pi: "passed",
   },
