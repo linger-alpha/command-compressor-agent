@@ -1,21 +1,13 @@
 "use strict";
 
 const {
-  CONSERVATIVE_PASSTHROUGH_COMMAND_PATTERNS,
-  RAW_FALLBACK_COMMAND_PATTERNS,
-} = require("./patterns");
-const {
   asInt,
   estimateTokens,
   firstString,
-  matchesAny,
   objectOrEmpty,
 } = require("./utils");
 const {
-  hasStrongCompressionCandidate,
   isCritical,
-  isDenseSemanticListOutput,
-  isVisualDiagnosticOutput,
 } = require("./classifiers");
 const {
   buildResult,
@@ -28,14 +20,14 @@ const { loadRuleSet, selectRules } = require("./rules");
 const { splitBlocks } = require("./splitter");
 const { scoreBlocks } = require("./scorer");
 const { planCompression } = require("./planner");
-const { resolveStrengthProfile } = require("../config/strength");
+const { commandPassthroughReason } = require("./command-policy");
+const { normalizeStrength } = require("../config/strength");
 
 function handleClaudePostToolUse(payload, options = {}) {
   const observation = observationFromPayload(payload);
   const result = compressObservation(observation, options);
   const hookOutput = { hookEventName: "PostToolUse" };
   if (result.changed) {
-    hookOutput.additionalContext = compressionContext(result);
     const toolResponse = objectOrEmpty(payload.tool_response);
     hookOutput.updatedToolOutput = {
       stdout: result.text,
@@ -59,88 +51,44 @@ function failOpen(message) {
 function compressObservation(observation, options = {}) {
   const ruleSet = loadRuleSet(options.rulesPath);
   const rawDir = options.rawDir || process.env.COMMAND_COMPRESSOR_RAW_DIR || ".command-compressor/raw";
-  const profile = resolveStrengthProfile(options.strength || process.env.CCA_STRENGTH || "default");
+  const strength = normalizeStrength(options.strength || process.env.CCA_STRENGTH || "default");
   const raw = formatRaw(observation);
   const rawRef = writeRaw(raw, rawDir);
   const rawTokens = estimateTokens(raw);
   const critical = isCritical(observation, raw);
 
-  const passthrough = passthroughReason(observation, raw, ruleSet, critical, rawDir);
+  const passthrough = commandPassthroughReason(observation.command, rawDir, ruleSet.commandPolicy);
   if (passthrough) {
-    return passthroughResult(observation, raw, rawRef, passthrough, critical, profile.name);
+    return passthroughResult(raw, rawRef, passthrough, critical, strength);
   }
 
   const selectedStrongRules = selectRules(ruleSet.strongRules, observation.command, raw);
-  const selectedWeakRules = profile.strongOnly ? [] : selectRules(ruleSet.weakRules, observation.command, raw);
+  const selectedWeakRules = selectRules(ruleSet.weakRules, observation.command, raw);
   const selectedRules = selectedStrongRules.concat(selectedWeakRules);
-  const strongCandidate = hasStrongCompressionCandidate(observation, raw, selectedStrongRules);
-
-  if (rawTokens < profile.minRawTokens) {
-    return passthroughResult(observation, raw, rawRef, {
-      status: `${profile.name} threshold passthrough`,
-      rules: ["strength_threshold_passthrough"],
-    }, critical, profile.name);
-  }
-  if (!selectedRules.length && !critical && !strongCandidate) {
-    return passthroughResult(observation, raw, rawRef, {
-      status: "no matching rule passthrough",
-      rules: ["no_matching_rule_passthrough"],
-    }, critical, profile.name);
-  }
 
   const blocks = splitBlocks(outputLinesFromObservation(observation), ruleSet.splitter);
-  const scoredBlocks = scoreBlocks(blocks, ruleSet.importance);
+  const scoredBlocks = scoreBlocks(blocks, ruleSet.blockPolicy);
   const plan = planCompression(scoredBlocks, {
     config: ruleSet.planner,
-    rawTokens,
     rules: selectedRules,
-    strength: profile.name,
   });
-  let text = withHeader(observation, plan.body, rawRef, "compressed importance-planned output");
+  let text = withHeader(observation, plan.body, rawRef);
   let changed = estimateTokens(text) < rawTokens;
   let ruleIds = plan.ruleIds;
   if (!changed) {
     text = raw;
     ruleIds = ["no_savings_passthrough"];
   }
-  const result = buildResult(text, rawRef, raw, ruleIds, critical, changed, profile.name);
+  const result = buildResult(text, rawRef, raw, ruleIds, critical, changed, strength);
   result.plan = {
-    targetTokens: plan.targetTokens,
     plannedTokens: plan.plannedTokens,
-    budgetExceeded: plan.budgetExceeded,
     blocks: plan.blocks,
   };
   return result;
 }
 
-function passthroughReason(observation, raw, ruleSet, critical, rawDir) {
-  if (isRawFallbackRead(observation.command, rawDir)) {
-    return { status: "raw fallback read passthrough", rules: ["raw_fallback_read_passthrough"] };
-  }
-  if (matchesAny(ruleSet.whitelist, observation.command)) {
-    return { status: "whitelist passthrough", rules: ["whitelist_passthrough"] };
-  }
-  if (matchesAny(CONSERVATIVE_PASSTHROUGH_COMMAND_PATTERNS, observation.command)) {
-    return { status: "conservative passthrough: original data inspection output", rules: ["data_inspection_passthrough"] };
-  }
-  if (isVisualDiagnosticOutput(observation, raw, ruleSet)) {
-    return { status: "visual diagnostic passthrough", rules: ["visual_diagnostic_passthrough"] };
-  }
-  if (isDenseSemanticListOutput(observation)) {
-    return { status: "semantic list passthrough", rules: ["semantic_list_passthrough"] };
-  }
-  return null;
-}
-
-function isRawFallbackRead(command, rawDir) {
-  const text = String(command || "");
-  if (matchesAny(RAW_FALLBACK_COMMAND_PATTERNS, text, "i")) return true;
-  return Boolean(rawDir && text.includes(String(rawDir)));
-}
-
-function passthroughResult(observation, raw, rawRef, reason, critical, strength) {
-  const text = withHeader(observation, raw, rawRef, reason.status);
-  return buildResult(text, rawRef, raw, reason.rules, critical, false, strength);
+function passthroughResult(raw, rawRef, reason, critical, strength) {
+  return buildResult(raw, rawRef, raw, reason.rules, critical, false, strength);
 }
 
 function observationFromPayload(payload) {
@@ -165,19 +113,6 @@ function observationFromPayload(payload) {
     agent: "claude-code",
     toolName: firstString(payload.tool_name, "Bash"),
   };
-}
-
-function compressionContext(result) {
-  return [
-    "Command output was replaced by command-compressor.",
-    `raw_tokens_est=${result.rawTokensEst},`,
-    `compressed_tokens_est=${result.compressedTokensEst},`,
-    `critical=${String(result.critical)},`,
-    `changed=${String(result.changed)},`,
-    `strength=${result.strength},`,
-    `rules=${result.ruleIds.join("+")},`,
-    `raw_ref=${result.rawRef}.`,
-  ].join(" ");
 }
 
 module.exports = {

@@ -2,62 +2,89 @@
 
 const { repetitionSignature } = require("./splitter");
 
+const TIER_ORDER = {
+  aggressive: 0,
+  light: 1,
+  preserve: 2,
+};
+
 const DEFAULT_SIGNALS = [
   {
-    id: "exception_traceback",
-    score: 80,
-    pattern: "\\b(?:Exception|Traceback)\\b",
-    flags: "i",
+    id: "opaque_encoded",
+    kind: "opaque_encoded",
+    tier: "preserve",
   },
   {
-    id: "error_fatal_failed",
-    score: 50,
+    id: "dense_semantic",
+    kind: "dense_semantic",
+    tier: "preserve",
+  },
+  {
+    id: "visual_structure",
+    kind: "visual",
+    tier: "preserve",
+  },
+  {
+    id: "traceback_exception",
+    pattern: "\\b(?:Exception|Traceback)\\b",
+    flags: "i",
+    tier: "preserve",
+  },
+  {
+    id: "error_failure",
     pattern: "(?:\\b(?:ERROR|fatal|FAILED)\\b|\\b[A-Za-z_][A-Za-z0-9_]*(?:Error|Failure)\\b)",
     flags: "i",
+    tier: "preserve",
   },
   {
     id: "file_line",
-    score: 20,
-    pattern: "(?:\\bFile\\s+\"[^\"]+\",\\s*line\\s+\\d+|(?:^|\\s)[^\\s:]+:\\d+(?::\\d+)?)",
+    pattern: "(?:\\bFile\\s+\"[^\"]+\",\\s*line\\s+\\d+|(?:^|\\s)(?:(?:[^\\s:]*[/\\\\][^\\s:]+)|(?:[A-Za-z0-9_.-]+\\.[A-Za-z0-9]{1,8})):\\d+(?::\\d+)?)",
     flags: "i",
+    tier: "light",
   },
   {
     id: "warning",
-    score: 10,
     pattern: "\\b(?:warning|warn)\\b",
     flags: "i",
+    tier: "light",
   },
   {
     id: "progress_download",
-    score: -20,
-    pattern: "(?:\\b(?:progress|download(?:ing|ed)?|upload(?:ing|ed)?|extracting|receiving|resolving)\\b|\\d{1,3}%\\|)",
-    flags: "i",
+    kind: "progress",
+    tier: "aggressive",
   },
   {
     id: "duplicate",
-    score: -30,
     kind: "duplicate",
+    tier: "aggressive",
   },
 ];
 
 function scoreBlock(block, config = {}) {
+  if (block.separator) {
+    return {
+      block,
+      tier: "aggressive",
+      score: 0,
+      reasons: [],
+    };
+  }
   const text = block.lines.join("\n");
   const reasons = [];
-  let score = 0;
+  let matchedTier = null;
   const signals = normalizeSignals(config.signals);
   for (const signal of signals) {
-    const matched = signal.kind === "duplicate"
-      ? hasDuplicatePattern(block.lines)
-      : safeTest(signal.pattern, text, signal.flags);
-    if (!matched) continue;
-    score += signal.score;
-    reasons.push({ id: signal.id, score: signal.score });
+    if (!signalMatches(signal, block, text, config)) continue;
+    reasons.push({ id: signal.id, tier: signal.tier });
+    if (matchedTier == null || TIER_ORDER[signal.tier] > TIER_ORDER[matchedTier]) {
+      matchedTier = signal.tier;
+    }
   }
-  const minimum = finiteNumber(config.min_score, config.minScore, -100);
-  const maximum = finiteNumber(config.max_score, config.maxScore, 100);
+  const tier = matchedTier || normalizeTier(config.default_tier || config.defaultTier || "light");
   return {
     block,
-    score: Math.max(minimum, Math.min(maximum, score)),
+    tier,
+    score: tierScore(tier),
     reasons,
   };
 }
@@ -72,29 +99,125 @@ function normalizeSignals(value) {
     .filter((signal) => signal && typeof signal === "object")
     .map((signal, index) => ({
       id: String(signal.id || `signal_${index + 1}`),
-      score: finiteNumber(signal.score, 0),
+      tier: signalTier(signal),
       pattern: signal.pattern == null ? "" : String(signal.pattern),
       flags: String(signal.flags || "i").replace(/g/g, ""),
       kind: signal.kind ? String(signal.kind) : "",
     }));
 }
 
+function signalTier(signal) {
+  if (signal.tier) return normalizeTier(signal.tier);
+  const legacyScore = Number(signal.score);
+  if (legacyScore >= 50) return "preserve";
+  if (legacyScore >= 0) return "light";
+  return "aggressive";
+}
+
+function normalizeTier(value) {
+  const tier = String(value || "").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(TIER_ORDER, tier) ? tier : "light";
+}
+
+function tierScore(tier) {
+  if (tier === "preserve") return 100;
+  if (tier === "light") return 50;
+  return 0;
+}
+
+function signalMatches(signal, block, text, config) {
+  if (signal.kind === "duplicate") return hasDuplicatePattern(block.lines);
+  if (signal.kind === "progress") return hasProgressPattern(block.lines);
+  if (signal.kind === "opaque_encoded") return isOpaqueEncodedBlock(block.lines, config.opaque_encoded);
+  if (signal.kind === "dense_semantic") return isDenseSemanticBlock(block.lines, config.dense_semantic);
+  if (signal.kind === "visual") return isVisualStructureBlock(block.lines, config.visual);
+  return safeTest(signal.pattern, text, signal.flags);
+}
+
 function hasDuplicatePattern(lines) {
   const counts = new Map();
-  let previous = null;
-  let run = 0;
   for (const line of lines) {
-    if (!String(line).trim()) continue;
-    const signature = repetitionSignature(line);
-    const count = (counts.get(signature) || 0) + 1;
-    counts.set(signature, count);
+    const exact = String(line).trim();
+    if (!exact) continue;
+    const count = (counts.get(exact) || 0) + 1;
+    counts.set(exact, count);
     if (count >= 3) return true;
-    if (signature === previous) {
-      run += 1;
-      if (run >= 3) return true;
-    } else {
-      previous = signature;
-      run = 1;
+  }
+  return false;
+}
+
+function hasProgressPattern(lines) {
+  let matches = 0;
+  for (const line of lines) {
+    if (
+      /\d{1,3}%\|/.test(line) ||
+      /\b(?:Downloading|Extracting|Processing|Uploading|Receiving|Resolving)\b/i.test(line) ||
+      /\b(?:ETA|elapsed|remaining|it\/s|s\/it|B\/s|MB\/s|GB\/s)\b/i.test(line)
+    ) {
+      matches += 1;
+      if (matches >= Math.min(3, Math.max(1, lines.length))) return true;
+    }
+  }
+  return false;
+}
+
+function isOpaqueEncodedBlock(lines, config = {}) {
+  const minimumEncodedChars = finitePositive(config && config.minimum_encoded_chars, 256);
+  const minimumEncodedLines = finitePositive(config && config.minimum_encoded_lines, 2);
+  let encodedChars = 0;
+  let encodedLines = 0;
+  let hexLines = 0;
+  for (const value of lines) {
+    const line = String(value);
+    const trimmed = line.trim();
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/.test(line)) return true;
+    if (/^-----BEGIN [A-Z0-9 ][A-Z0-9 -]*-----$/.test(trimmed)) return true;
+    if (/^data:[^,\s]{1,200};base64,[A-Za-z0-9+/=]{128,}$/.test(trimmed)) return true;
+    if (/^(?:[A-Za-z0-9+/]{4}){16,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(trimmed)) {
+      encodedLines += 1;
+      encodedChars += trimmed.length;
+      if (trimmed.length >= minimumEncodedChars * 2) return true;
+    }
+    if (/^\s*(?:[0-9a-f]{4,16}:?\s+)(?:[0-9a-f]{2}(?:\s+|$)){8,}/i.test(line)) {
+      hexLines += 1;
+    }
+  }
+  return (
+    encodedLines >= minimumEncodedLines &&
+    encodedChars >= minimumEncodedChars
+  ) || hexLines >= 2;
+}
+
+function isDenseSemanticBlock(lines, config = {}) {
+  const minimumLines = finitePositive(config && config.minimum_lines, 80);
+  const minimumNumbered = finitePositive(config && config.minimum_numbered_lines, 40);
+  const minimumRatio = finiteRatio(config && config.minimum_numbered_ratio, 0.5);
+  const nonEmpty = lines.filter((line) => String(line).trim());
+  if (nonEmpty.length < minimumLines) return false;
+  const progressLines = nonEmpty.filter((line) => hasProgressPattern([line]));
+  if (progressLines.length > Math.max(4, Math.floor(nonEmpty.length * 0.05))) return false;
+  const numbered = nonEmpty.filter((line) => /^\s*\d{1,6}\s*(?::|\.|\)|\t)\s*\S/.test(line));
+  if (numbered.length >= minimumNumbered && numbered.length / nonEmpty.length >= minimumRatio) return true;
+  const uniqueRatio = new Set(nonEmpty.map((line) => String(line).trim())).size / nonEmpty.length;
+  if (uniqueRatio < 0.8) return false;
+  const signatures = new Map();
+  for (const line of nonEmpty) {
+    const signature = repetitionSignature(line);
+    signatures.set(signature, (signatures.get(signature) || 0) + 1);
+  }
+  const largestStructure = Math.max(0, ...signatures.values());
+  return largestStructure / nonEmpty.length >= minimumRatio;
+}
+
+function isVisualStructureBlock(lines, config = {}) {
+  const minimumMatrixLines = finitePositive(config && config.minimum_matrix_lines, 8);
+  let matrixLines = 0;
+  for (const value of lines) {
+    const trimmed = String(value).trim();
+    if (trimmed.length < 8 || trimmed.length > 200) continue;
+    if (/^[.#01XxOo@+\-*\s]+$/.test(trimmed)) {
+      matrixLines += 1;
+      if (matrixLines >= minimumMatrixLines) return true;
     }
   }
   return false;
@@ -109,17 +232,25 @@ function safeTest(pattern, text, flags) {
   }
 }
 
-function finiteNumber(...values) {
-  for (const value of values) {
-    const number = Number(value);
-    if (Number.isFinite(number)) return number;
-  }
-  return 0;
+function finitePositive(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function finiteRatio(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : fallback;
 }
 
 module.exports = {
   DEFAULT_SIGNALS,
+  TIER_ORDER,
   hasDuplicatePattern,
+  hasProgressPattern,
+  isDenseSemanticBlock,
+  isOpaqueEncodedBlock,
+  isVisualStructureBlock,
+  normalizeTier,
   scoreBlock,
   scoreBlocks,
 };

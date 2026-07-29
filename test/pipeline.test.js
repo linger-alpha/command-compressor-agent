@@ -6,6 +6,7 @@ const os = require("os");
 const path = require("path");
 
 const { compressObservation } = require("../src/compression/compressor");
+const { isReadOnlyCommand } = require("../src/compression/command-policy");
 const { planCompression } = require("../src/compression/planner");
 const { loadRuleSet } = require("../src/compression/rules");
 const { scoreBlock, scoreBlocks } = require("../src/compression/scorer");
@@ -28,6 +29,31 @@ function block(lines, startLine = 1) {
 }
 
 {
+  const safeReads = [
+    "git status; git diff | sed -n '1,80p'",
+    "cd /tmp && rg -n 'needle' . | head -n 20",
+    "if test -f package.json; then sed -n '1,40p' package.json; else printf 'missing\\n'; fi",
+    "for file in a b; do printf '%s\\n' \"$file\"; sed -n '1,5p' \"$file\"; done",
+  ];
+  const mutations = [
+    "cat package.json; rm package.json",
+    "find . -name '*.tmp' -delete",
+    "sed -i 's/a/b/' package.json",
+    "rg needle . | tee matches.txt",
+    "printf '%s' \"$(python mutate.py)\"",
+    "printf 'generated output\\n'",
+    "echo generated output",
+    "python inspect.py",
+  ];
+  for (const command of safeReads) {
+    assert.strictEqual(isReadOnlyCommand(command), true, `expected read-only: ${command}`);
+  }
+  for (const command of mutations) {
+    assert.strictEqual(isReadOnlyCommand(command), false, `expected general/mutating: ${command}`);
+  }
+}
+
+{
   const lines = [
     "2026-07-29 10:00:00 INFO first",
     "2026-07-29 10:01:00 INFO second",
@@ -46,10 +72,23 @@ function block(lines, startLine = 1) {
     "done",
   ];
   const blocks = splitBlocks(lines);
-  assert.deepStrictEqual(blocks.map((entry) => entry.startLine), [1, 3, 4, 5, 6, 10, 11, 12, 15]);
+  assert.deepStrictEqual(blocks.map((entry) => entry.startLine), [1, 3, 4, 5, 6, 10, 12, 15]);
   assert.strictEqual(blocks[4].kind, "traceback");
   assert.deepStrictEqual(blocks[4].lines, lines.slice(5, 9), "traceback must stay in one block");
-  assert.deepStrictEqual(blocks[7].lines, lines.slice(11, 14), "normalized repeated run must stay together");
+  assert.deepStrictEqual(blocks[6].lines, lines.slice(11, 14), "normalized repeated run must stay together");
+}
+
+{
+  const source = [
+    "def run():",
+    "    try:",
+    "        work()",
+    "    except RuntimeError:",
+    "        recover()",
+    "return run()",
+  ];
+  const blocks = splitBlocks(source);
+  assert.strictEqual(blocks.length, 1, "source indentation changes must not create micro-blocks");
 }
 
 {
@@ -58,10 +97,10 @@ function block(lines, startLine = 1) {
     '  File "task.py", line 42',
     "RuntimeError: ERROR FAILED warning Exception",
   ]));
-  assert.strictEqual(scored.score, 100, "importance score must clamp at 100");
+  assert.strictEqual(scored.tier, "preserve");
   assert.deepStrictEqual(
     scored.reasons.map((reason) => reason.id),
-    ["exception_traceback", "error_fatal_failed", "file_line", "warning"]
+    ["traceback_exception", "error_failure", "file_line", "warning"]
   );
 
   const noise = scoreBlock(block([
@@ -69,58 +108,56 @@ function block(lines, startLine = 1) {
     "Downloading wheel 2 20%|████",
     "Downloading wheel 3 30%|██████",
   ]));
-  assert.strictEqual(noise.score, -50);
-  assert.deepStrictEqual(noise.reasons.map((reason) => reason.id), ["progress_download", "duplicate"]);
+  assert.strictEqual(noise.tier, "aggressive");
+  assert.deepStrictEqual(noise.reasons.map((reason) => reason.id), ["progress_download"]);
 }
 
 {
   const highLines = Array.from({ length: 4000 }, (_, index) => `Traceback context ${index}`);
   const scored = scoreBlocks([block(highLines)]);
   const planned = planCompression(scored, {
-    rawTokens: 1000,
-    strength: "xhigh",
     config: {},
     rules: [],
   });
-  assert.strictEqual(planned.targetTokens, 800, "minimum soft budget should be 800 tokens");
-  assert.strictEqual(planned.blocks[0].tier, "high");
+  assert.strictEqual(planned.blocks[0].tier, "preserve");
   assert.strictEqual(planned.blocks[0].mode, "lossless");
   assert(planned.body.includes(highLines[0]));
   assert(planned.body.includes(highLines[highLines.length - 1]));
-  assert.strictEqual(planned.budgetExceeded, true, "high-importance content may exceed the soft budget");
+  assert(!planned.body.includes("[block "), "model-visible output must not contain block diagnostics");
+  assert(!planned.body.includes("[compression plan]"), "model-visible output must not contain policy diagnostics");
+}
 
-  for (const [strength, expected] of Object.entries({
-    low: 7500,
-    default: 5000,
-    high: 3500,
-    xhigh: 2500,
-  })) {
-    const emptyPlan = planCompression([], {
-      rawTokens: 10000,
-      strength,
-      config: {},
-      rules: [],
-    });
-    assert.strictEqual(emptyPlan.targetTokens, expected);
-  }
+{
+  const separator = {
+    startLine: 2,
+    endLine: 2,
+    lines: [""],
+    separator: true,
+    kind: "separator",
+  };
+  const planned = planCompression([
+    { block: block(["first"]), tier: "light", reasons: [] },
+    { block: separator, tier: "aggressive", reasons: [] },
+    { block: block(["second"], 3), tier: "light", reasons: [] },
+  ]);
+  assert.strictEqual(planned.blocks.length, 2, "blank separators are layout, not compression units");
+  assert(planned.body.includes("first\n\nsecond"));
 }
 
 {
   const mediumBlock = block(["warning: check configuration", ...Array.from({ length: 120 }, (_, index) => `detail ${index}`)]);
   const lowBlock = block(Array.from({ length: 120 }, (_, index) => `Downloading part ${index} ${index}%|██`), 122);
   const planned = planCompression([
-    { block: mediumBlock, score: 10, reasons: [{ id: "warning", score: 10 }] },
-    { block: lowBlock, score: -50, reasons: [{ id: "progress_download", score: -20 }, { id: "duplicate", score: -30 }] },
+    { block: mediumBlock, tier: "light", reasons: [{ id: "warning", tier: "light" }] },
+    { block: lowBlock, tier: "aggressive", reasons: [{ id: "progress_download", tier: "aggressive" }, { id: "duplicate", tier: "aggressive" }] },
   ], {
-    rawTokens: 10000,
-    strength: "default",
     config: {},
     rules: [],
   });
-  assert.strictEqual(planned.blocks[0].tier, "medium");
-  assert(planned.blocks[0].mode.startsWith("light"));
-  assert.strictEqual(planned.blocks[1].tier, "low");
-  assert(["strong", "minimal"].includes(planned.blocks[1].mode));
+  assert.strictEqual(planned.blocks[0].tier, "light");
+  assert.strictEqual(planned.blocks[0].mode, "light");
+  assert.strictEqual(planned.blocks[1].tier, "aggressive");
+  assert.strictEqual(planned.blocks[1].mode, "aggressive");
 }
 
 {
@@ -143,8 +180,9 @@ function block(lines, startLine = 1) {
   const loaded = loadRuleSet(customPath);
   assert.strictEqual(loaded.version, 1);
   assert.strictEqual(loaded.strongRules[0].rule_id, "custom_rule");
-  assert(Array.isArray(loaded.importance.signals), "v1 rules should receive bundled v2 scoring defaults");
-  assert(loaded.planner.budget_ratios.xhigh > 0);
+  assert(Array.isArray(loaded.blockPolicy.signals), "v1 rules should receive bundled block-policy defaults");
+  assert(loaded.planner.light.max_lines > 0);
+  assert(loaded.commandPolicy.compatibility_patterns.includes("^custom$"));
   assert.strictEqual(fs.readFileSync(customPath, "utf8"), before, "compatibility fallback must not overwrite user rules");
 }
 
@@ -176,7 +214,9 @@ function block(lines, startLine = 1) {
   assert(result.text.includes("Traceback (most recent call last):"));
   assert(result.text.includes("ValueError: 重要错误 token=[REDACTED]"));
   assert(!result.text.includes("sk-abcdefghijklmnopqrstuvwxyz123456"));
-  assert(result.text.includes("importance=high"));
+  assert(!result.text.includes("importance="));
+  assert(!result.text.includes("score="));
+  assert(result.text.includes("raw_ref:"));
   assert(!result.text.includes("\u001b["), "ANSI sequences must be removed");
 }
 
@@ -198,7 +238,30 @@ function block(lines, startLine = 1) {
     rulesPath,
   });
   assert.strictEqual(result.changed, false);
-  assert.deepStrictEqual(result.ruleIds, ["semantic_list_passthrough"]);
+  assert(result.plan.blocks.some((entry) => entry.tier === "preserve"));
+}
+
+{
+  const encoded = Array.from(
+    { length: 8 },
+    (_, index) => Buffer.from(`opaque-${index}-${"x".repeat(96)}`).toString("base64")
+  ).join("\n");
+  const result = compressObservation({
+    command: "python emit_blob.py",
+    stdout: encoded,
+    stderr: "command failed",
+    exitCode: 1,
+    agent: "test",
+    toolName: "Bash",
+  }, {
+    strength: "xhigh",
+    rawDir: tempDir("encoded"),
+    rulesPath,
+  });
+  assert.strictEqual(result.changed, false, "opaque encoded blocks must remain lossless");
+  assert(result.plan.blocks.some((entry) =>
+    entry.reasons.some((reason) => reason.id === "opaque_encoded")
+  ));
 }
 
 {
@@ -215,8 +278,6 @@ function block(lines, startLine = 1) {
     const blocks = splitBlocks(lines);
     const scored = scoreBlocks(blocks);
     const plan = planCompression(scored, {
-      rawTokens: Math.max(1, lines.join("\n").length / 4),
-      strength: "xhigh",
       config: {},
       rules: [],
     });

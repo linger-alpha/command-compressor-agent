@@ -40,16 +40,21 @@ function compress(stdout, strength) {
 {
   const shortProgress = progressOutput(40);
   const result = compress(shortProgress, "default");
-  assert.strictEqual(result.changed, false, "default should exempt sub-2k token outputs");
-  assert.deepStrictEqual(result.ruleIds, ["strength_threshold_passthrough"]);
+  assert.strictEqual(result.changed, true, "compressible blocks should not be exempted by a global token threshold");
+  assert(result.ruleIds.includes("importance_aggressive_compress"));
 }
 
 {
   const mediumProgress = progressOutput(90);
   const high = compress(mediumProgress, "high");
   const def = compress(mediumProgress, "default");
-  assert.strictEqual(high.changed, true, "high should compress above 1k tokens");
-  assert.strictEqual(def.changed, false, "default should still exempt below 2k tokens");
+  assert.strictEqual(high.changed, true);
+  assert.strictEqual(def.changed, true);
+  assert.strictEqual(
+    high.plan.plannedTokens,
+    def.plan.plannedTokens,
+    "legacy strength settings must not override block-level policy"
+  );
 }
 
 {
@@ -61,7 +66,10 @@ function compress(stdout, strength) {
 {
   const genericLong = Array.from({ length: 900 }, (_, index) => `semantic row ${index}: value=${index}`).join("\n");
   const result = compress(genericLong, "low");
-  assert.strictEqual(result.changed, false, "low should not head/tail generic long output");
+  assert.strictEqual(result.changed, false, "high-uniqueness structured rows should be preserved as semantic data");
+  assert(result.plan.blocks.some((entry) =>
+    entry.reasons.some((reason) => reason.id === "dense_semantic")
+  ));
 }
 
 {
@@ -77,8 +85,8 @@ function compress(stdout, strength) {
     rawDir: tempDir("visual"),
     rulesPath: path.resolve(__dirname, "..", "rules", "default-rules.json"),
   });
-  assert.strictEqual(result.changed, false, "visual diagnostic output should passthrough even at xhigh");
-  assert.deepStrictEqual(result.ruleIds, ["visual_diagnostic_passthrough"]);
+  assert.strictEqual(result.changed, false, "visual diagnostic blocks should be preserved");
+  assert(result.plan.blocks.some((entry) => entry.tier === "preserve"));
 }
 
 {
@@ -96,8 +104,26 @@ function compress(stdout, strength) {
     rawDir: tempDir("failed-visual"),
     rulesPath: path.resolve(__dirname, "..", "rules", "default-rules.json"),
   });
-  assert.strictEqual(result.changed, false, "failed visual diagnostics should passthrough before critical compression");
-  assert.deepStrictEqual(result.ruleIds, ["visual_diagnostic_passthrough"]);
+  assert.strictEqual(result.changed, false, "failed visual diagnostics should remain lossless at block level");
+  assert(result.plan.blocks.some((entry) => entry.tier === "preserve"));
+}
+
+{
+  const readOnly = compressObservation(observe(progressOutput(120), "cat build.log"), {
+    strength: "xhigh",
+    rawDir: tempDir("read-only"),
+    rulesPath: path.resolve(__dirname, "..", "rules", "default-rules.json"),
+  });
+  assert.strictEqual(readOnly.changed, false);
+  assert.deepStrictEqual(readOnly.ruleIds, ["read_only_passthrough"]);
+
+  const rtk = compressObservation(observe(progressOutput(120), "rtk python3 train.py"), {
+    strength: "xhigh",
+    rawDir: tempDir("rtk"),
+    rulesPath: path.resolve(__dirname, "..", "rules", "default-rules.json"),
+  });
+  assert.strictEqual(rtk.changed, false);
+  assert.deepStrictEqual(rtk.ruleIds, ["rtk_passthrough"]);
 }
 
 {

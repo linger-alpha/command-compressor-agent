@@ -40,7 +40,6 @@ function splitBlocks(input, config = {}) {
     const nextSignature = nextLine.trim() ? repetitionSignature(nextLine) : null;
     const meta = {
       blank: false,
-      indent: indentationClass(line),
       level: logLevel(line, settings.logLevel),
       timestamp: timestampKey(line),
       traceback: lineInTraceback,
@@ -74,7 +73,6 @@ function isBoundary({ current, nextSignature, previous, previousPreviousSignatur
   if (!current.traceback && !previous.traceback) {
     if (current.timestamp && previous.timestamp && current.timestamp !== previous.timestamp) return true;
     if (current.level && previous.level && current.level !== previous.level) return true;
-    if (current.indent !== previous.indent) return true;
     const startsRepeatedRun =
       nextSignature && current.signature === nextSignature && current.signature !== previous.signature;
     const endsRepeatedRun =

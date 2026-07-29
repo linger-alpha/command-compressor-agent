@@ -27,16 +27,6 @@ function handleClaudePostToolUse(payload, options = {}) {
     hookEventName: "PostToolUse",
   };
   if (result.changed) {
-    hookOutput.additionalContext = [
-      "Command output was replaced by command-compressor.",
-      `raw_tokens_est=${result.rawTokensEst},`,
-      `compressed_tokens_est=${result.compressedTokensEst},`,
-      `critical=${String(result.critical)},`,
-      `changed=${String(result.changed)},`,
-      `strength=${result.strength},`,
-      `rules=${result.ruleIds.join("+")},`,
-      `raw_ref=${result.rawRef}.`,
-    ].join(" ");
     const toolResponse = objectOrEmpty(payload.tool_response);
     hookOutput.updatedToolOutput = {
       stdout: result.text,

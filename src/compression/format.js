@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const { commandSummary, estimateTokens, redact, stripAnsi } = require("./utils");
+const { estimateTokens, redact, stripAnsi } = require("./utils");
 
 function formatRaw(observation) {
   const parts = [
@@ -16,18 +16,11 @@ function formatRaw(observation) {
   return parts.join("\n").trimEnd() + "\n";
 }
 
-function withHeader(observation, body, rawRef, status) {
-  const header = [
-    "[command-compressor]",
-    `status: ${status}`,
-    `command: ${commandSummary(observation.command)}`,
-    `exit_code: ${observation.exitCode == null ? "unknown" : observation.exitCode}`,
-  ];
-  if (rawRef) {
-    header.push(`raw_ref: ${rawRef}`);
-    header.push("fallback: use raw_ref only if a required fact is missing from retained output; do not read it for routine confirmation");
-  }
-  return `${header.join("\n")}\n\n${body.trimEnd()}\n`;
+function withHeader(observation, body, rawRef) {
+  const header = rawRef
+    ? `[compressed output; fallback raw_ref: ${rawRef}]`
+    : "[compressed output]";
+  return `${header}\n${body.trimEnd()}\n`;
 }
 
 function writeRaw(raw, rawDir) {
