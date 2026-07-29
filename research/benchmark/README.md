@@ -1,133 +1,183 @@
 # Terminal-Bench 2.1 benchmark
 
-This repository-only harness fixes the release experiment at:
+This directory is repository-only and never enters the npm package.
 
-- dataset: the official Harbor Hub package
+## Fixed 10 × 3 experiment
+
+The release experiment is fixed at:
+
+- official Harbor Hub dataset
   `terminal-bench/terminal-bench-2-1@latest`;
-- tasks: `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`, and
-  `log-summary-date-ranges`;
-- arms: no compression, Git `7830b17` (the 0.1.4 core), and the current core;
-- the current arm is pinned to the Git commit recorded in the generated plan;
-- four repeats per task and arm, for 48 trials total;
+- ten tasks: `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`,
+  `log-summary-date-ranges`, `regex-log`, `nginx-request-logging`,
+  `extract-elf`, `sqlite-db-truncate`, `code-from-image`, and
+  `count-dataset-tokens`;
+- three arms: no compression, Git `7830b17` (0.1.4), and the current
+  production runtime pinned by commit;
+- three repeats per task and arm, for 90 dynamic trials;
 - Codex CLI with `gpt-5.6-luna`, `max` reasoning, seed `20260729`, and one
   trial at a time.
 
-The harness uses the same current Codex hook adapter for both compression arms.
-The legacy arm swaps only the compression core and rules to the exact Git
-baseline. The controlled Harbor runner passes
-`--dangerously-bypass-hook-trust` because the hook bundle was assembled locally
-from the checked-out repository. Normal `cca install --codex` never bypasses
-trust and still requires review through `/hooks`.
+Every arm records all Bash Tool Results. The primary fixed-input corpus is
+formed only from no-compression trajectories, then the exact same records are
+replayed through 0.1.4 and the current compressor. The union of all three arms
+is reported only as a diagnostic because compression can change the Agent
+trajectory.
 
-## Generate and inspect the fixed plan
+Generate the plan:
 
 ```sh
 node research/benchmark/cli.js plan \
-  --out research/artifacts/tb21-plan.json
-
-node research/benchmark/cli.js config \
-  --plan research/artifacts/tb21-plan.json \
-  --trial build-cython-ext--current--r1
+  --out research/artifacts/tb21-10x3-plan.json
 ```
 
-## Run
-
-Harbor 0.4 and Docker must be available. Override the auto-detected local
-development paths when needed:
+Inspect or run one trial:
 
 ```sh
-HARBOR_PYTHON=/path/to/python \
-HARBOR_LAUNCHER=/path/to/harbor \
-HARBOR_SOURCE=/path/to/harbor/src \
+node research/benchmark/cli.js config \
+  --plan research/artifacts/tb21-10x3-plan.json \
+  --trial regex-log--current--r1
+
 node research/benchmark/cli.js run \
-  --plan research/artifacts/tb21-plan.json
+  --plan research/artifacts/tb21-10x3-plan.json \
+  --trial regex-log--current--r1
 ```
 
-For a real but bounded infrastructure smoke test, append `--max-trials 1`.
-Use `--trial build-cython-ext--current--r1` to select the current-hook arm
-explicitly.
-The runner persists state after every sequential trial. Results and temporary
-configs live under `research/jobs/`, which is excluded from Git and npm.
-The current arm refuses to run if `bin/`, `src/`, `rules/`, or `package.json`
-differs from the commit pinned by the plan. Research-only commits are allowed
-when those production paths are still byte-for-byte equivalent to the pinned
-commit. Reports reject current-arm artifacts whose pinned runtime metadata
-does not match the plan.
+The runner also accepts `--arm`, `--task`, `--max-trials`, and `--force`.
+For example, `--arm none` collects only the unbiased static-replay corpus.
+State is persisted after every sequential trial under `research/jobs/`.
 
-## Report and release gate
+## Model-visible replacement gate
+
+A hook process returning compressed text is not sufficient evidence that the
+Agent received it. The report audits Codex rollout JSONL and requires:
+
+1. both compression arms actually produce at least one changed result;
+2. every changed hook result appears as compressed text in the corresponding
+   model-visible tool result;
+3. all Tool Results are captured and task revisions have consistent checksums.
+
+This gate corrected an earlier interpretation of the benchmark.
+
+On 2026-07-29, a dedicated Docker/Harbor probe used Codex CLI 0.146.0 and
+`gpt-5.6-luna` max. The task forced one deterministic 120-line download result.
+The task passed with reward 1 and no exception. CCA compressed the result from
+about 928 to 85 estimated tokens, but the rollout still contained all 120
+original lines and no compressed marker:
+
+| Probe fact | Value |
+| --- | ---: |
+| Hook changed results | 1 |
+| Hook raw tokens | 928 |
+| Hook compressed tokens | 85 |
+| Model-visible compressed results | 0 |
+| Code-mode `exec` calls | 2 |
+| Task reward | 1 |
+
+Explicitly disabling `unified_exec`, `code_mode`, and `code_mode_only` changed
+the inner shell API but did not remove Luna's outer code-mode `exec` call.
+Codex did execute the trusted `PostToolUse` hook without an error; it ignored
+the replacement when constructing the code-mode result.
+
+This matches the released Codex source: `PostToolUseFeedbackOutput` substitutes
+the ordinary `to_response_item`, while its `code_mode_result` delegates to the
+original output:
+
+- [Codex 0.146.0 tool registry](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/registry.rs)
+- [Codex 0.146.0 PostToolUse parser](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/hooks/src/events/post_tool_use.rs)
+
+Therefore the earlier three-arm `build-cython-ext` runs do prove that the hook
+installed, ran without crashing, and coexisted with successful tasks. They do
+not prove that compression affected the model input. Their cross-arm token
+differences are trajectory variance, not valid compression-effect estimates.
+
+The complete 90-trial dynamic experiment is intentionally paused until the
+probe's model-visible replacement check passes. Running it now would spend
+substantial compute on three nominal arms whose model-visible Tool Results are
+actually unchanged.
+
+## Reproduce the hook probe
+
+Generate an absolute, commit-pinned Harbor config:
+
+```sh
+node research/benchmark/hook-probe.js config \
+  --arm current \
+  --out research/artifacts/hook-probe-current.json
+```
+
+Run it with the same Harbor environment used by the benchmark, then audit the
+job:
+
+```sh
+node research/benchmark/hook-probe.js report \
+  --job-dir research/jobs/hook-probe/JOB_NAME
+```
+
+The report fails unless the task completes, a compressible output is exercised,
+and every hook replacement is present in the model-visible rollout.
+
+## Fixed-input static replay
+
+Generate the static report from all captured results:
+
+```sh
+node research/benchmark/cli.js static-report \
+  --plan research/artifacts/tb21-10x3-plan.json \
+  --out research/artifacts/tb21-10x3-static-report.json
+```
+
+The current partial corpus contains three clean no-compression `regex-log`
+trajectories with thirteen Tool Results:
+
+| Same-input replay | Raw | 0.1.4 | Current | Current vs 0.1.4 |
+| --- | ---: | ---: | ---: | ---: |
+| All thirteen outputs | 1,358 | 1,358 | 913 | 32.77% fewer |
+| Ten general commands | 1,038 | 1,038 | 593 | 42.87% fewer |
+
+The trajectory-level result explains the spread:
+
+| Repeat | Tool Results | Raw/0.1.4 | Current | Current vs 0.1.4 |
+| --- | ---: | ---: | ---: | ---: |
+| r1, all output | 2 | 267 | 171 | 35.96% fewer |
+| r2, all output | 10 | 985 | 636 | 35.43% fewer |
+| r3, all output | 1 | 106 | 106 | unchanged |
+| r1, general commands | 1 | 148 | 52 | 64.86% fewer |
+| r2, general commands | 9 | 890 | 541 | 39.21% fewer |
+
+The single r3 Tool Result was a command-policy passthrough, so no general
+command row exists for r3. Its zero reduction is intentional, not a compressor
+failure. The 0.1.4 core changed none of the thirteen observations.
+
+The deterministic download probe provides a second output class:
+
+| Same-input replay | Raw | 0.1.4 | Current | Current vs 0.1.4 |
+| --- | ---: | ---: | ---: | ---: |
+| 120 progress lines | 928 | 185 | 102 | 44.86% fewer |
+
+These results verify that the current deterministic compressor beats 0.1.4 on
+the currently observed ordinary and progress-heavy fixed inputs. They are not
+yet a general result: the primary corpus covers only one of ten tasks and has
+zero critical lines and zero encoded/protected blocks. Static release checks
+now require positive critical and protected coverage, so a vacuous retention
+ratio cannot pass.
+
+## Release gates
+
+The dynamic report is generated with:
 
 ```sh
 node research/benchmark/cli.js report \
-  --plan research/artifacts/tb21-plan.json \
-  --out research/artifacts/tb21-report.json
+  --plan research/artifacts/tb21-10x3-plan.json \
+  --out research/artifacts/tb21-10x3-report.json
 ```
 
-The report fails the release gate unless all 48 results exist, the current arm
-passes at least as often as the legacy arm and is within one pass of the
-no-compression arm, matched successful triples reduce median input tokens by
-at least 10% versus no compression and 5% versus legacy, and every completed
-compression-arm trial contains actual CCA hook observations.
+It requires all 90 results, current task passes no lower than legacy and no
+more than one below no compression, matched-success input-token medians at
+least 10% below no compression and 5% below legacy, working capture and hook
+coverage, consistent task revisions, and verified model-visible replacements.
 
-## Bounded feasibility result
-
-On 2026-07-29, three clean `build-cython-ext` repeats were completed with Codex
-CLI 0.146.0. Earlier timeout, non-zero-exit, stale-runtime, Docker credential,
-and missing-Compose attempts remain diagnostic artifacts but are not included.
-Every result below has verifier reward 1 and no `exception_info`:
-
-| Repeat | No compression | Git `7830b17` | Current pipeline |
-| --- | ---: | ---: | ---: |
-| r1 input tokens | 3,556,308 | 2,262,527 | 3,135,255 |
-| r2 input tokens | 2,377,144 | 3,053,293 | 2,048,410 |
-| r3 input tokens | 3,397,416 | 2,256,770 | 3,123,450 |
-| median | 3,397,416 | 2,262,527 | 3,123,450 |
-
-The current arm used fewer input tokens than no compression in every repeat:
-11.84%, 13.83%, and 8.06% respectively. The fixed release calculation compares
-arm medians, producing an 8.06% reduction, below the required 10%. Results
-against the legacy arm were unstable: current was 38.57% worse in r1, 32.91%
-better in r2, and 38.40% worse in r3. The median comparison is therefore
-38.05% worse than legacy and fails the 5% improvement gate.
-
-The local hook measurements tell a different and narrower story:
-
-| Measurement over three repeats | Git `7830b17` | Current pipeline |
-| --- | ---: | ---: |
-| Hook observations | 129 | 156 |
-| Changed observations | 19 | 80 |
-| Raw output estimate | 147,060 | 136,425 |
-| Output after hook | 137,874 | 127,720 |
-| Command-policy passthrough output | 102,350 | 104,983 |
-| Processable output | 44,710 | 31,442 |
-| Total hook-local reduction | 6.25% | 6.38% |
-| Reduction of processable output | 20.55% | 27.69% |
-| Raw fallback reads | 0 | 0 |
-
-Thus the current block pipeline was not more conservative on output that
-reached it: it changed more observations and reduced the processable portion
-more than the old core. It also delivered about 10,000 fewer estimated tool
-output tokens in aggregate. The end-to-end input-token regression versus
-legacy came from different Agent trajectories, not from a larger post-hook
-output stream. Current made 27 more tool calls, mostly additional source
-inspection, and used 135 distinct commands versus legacy's 110. Exact repeated
-calls were similar (21 versus 19), so this was not a simple retry loop.
-
-This does not prove that compression caused the longer trajectories, nor that
-they were random. Model execution was nondeterministic and the three arms did
-not share a controllable model seed. Because input usage re-counts accumulated
-context across turns, call count and when large reads occur can dominate the
-few thousand tokens directly saved by a hook. The planned four tasks and 48
-trials remain necessary before drawing a general performance conclusion.
-
-The current model-facing prefix is a single line containing only
-`compressed output` and the fallback path; no score, tier, or strategy is
-shown. Across the 80 changed outputs, that required prefix accounted for an
-estimated 1,920 direct tokens before context replay. No fallback was read.
-These three task trajectories contained no Base64, PEM, hex-dump, or other
-encoded block, so real-task encoded preservation remains untested here even
-though deterministic unit tests cover it.
-
-The real model → Bash → PostToolUse replacement path worked in all three
-current repeats, and all observed task-success checks pass. Only 9 of the
-required 48 clean results exist, however, and both token gates fail. Version
-0.2.0 must not be released from this result.
+The static report separately requires all ten tasks, non-empty critical and
+protected samples, 100% retention of both, and at least 5% fewer tokens than
+0.1.4 on general commands. Version 0.2.0 must not be released until both sets
+of gates pass.

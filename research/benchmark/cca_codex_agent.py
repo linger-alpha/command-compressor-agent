@@ -54,8 +54,6 @@ class CcaCodex(Codex):
             ),
         )
         await self._write_arm_metadata(environment)
-        if self._cca_arm == "none":
-            return
 
         with tempfile.TemporaryDirectory(prefix=f"cca-harbor-{self._cca_arm}-") as root:
             bundle = Path(root) / "bundle"
@@ -75,6 +73,7 @@ class CcaCodex(Codex):
                 f"cp {CONTAINER_ROOT}/runtime-hooks.json {hooks_target} && "
                 f"{ownership}"
                 f"chmod 0755 {CONTAINER_ROOT}/bin/cca-benchmark-hook.sh "
+                f"{CONTAINER_ROOT}/bin/cca-benchmark-hook.js "
                 f"{CONTAINER_ROOT}/codex-benchmark-wrapper.sh"
             ),
         )
@@ -107,6 +106,10 @@ class CcaCodex(Codex):
                     f"if [ -f {EnvironmentPaths.agent_dir}/cca/gain.jsonl ]; then "
                     f"cp {EnvironmentPaths.agent_dir}/cca/gain.jsonl "
                     f"{EnvironmentPaths.artifacts_dir}/cca-gain.jsonl; "
+                    "fi; "
+                    f"if [ -f {EnvironmentPaths.agent_dir}/cca/observations.jsonl ]; then "
+                    f"cp {EnvironmentPaths.agent_dir}/cca/observations.jsonl "
+                    f"{EnvironmentPaths.artifacts_dir}/cca-observations.jsonl; "
                     "fi"
                 ),
             )
@@ -165,7 +168,7 @@ class CcaCodex(Codex):
             for name in ("bin", "src", "rules"):
                 shutil.copytree(self._cca_repo_root / name, bundle / name)
             shutil.copy2(self._cca_repo_root / "package.json", bundle / "package.json")
-        else:
+        elif self._cca_arm == "legacy":
             self._extract_baseline(bundle)
             for relative in (
                 Path("bin/cca-hook.js"),
@@ -175,6 +178,13 @@ class CcaCodex(Codex):
                 target = bundle / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self._cca_repo_root / relative, target)
+        else:
+            (bundle / "bin").mkdir(parents=True)
+
+        shutil.copy2(
+            self._cca_repo_root / "research" / "benchmark" / "hook-runner.js",
+            bundle / "bin" / "cca-benchmark-hook.js",
+        )
 
         config = {
             "version": 1,
@@ -215,18 +225,36 @@ class CcaCodex(Codex):
             "#!/bin/sh\n"
             'if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi\n'
             f"export CCA_CONFIG_PATH='{CONTAINER_ROOT}/runtime-config.json'\n"
-            f"exec node '{CONTAINER_ROOT}/bin/cca-hook.js' codex\n",
+            f"export CCA_RUNTIME_ROOT='{CONTAINER_ROOT}'\n"
+            f"export CCA_BENCHMARK_ARM='{self._cca_arm}'\n"
+            f"export CCA_OBSERVATIONS_PATH='{EnvironmentPaths.agent_dir}/cca/observations.jsonl'\n"
+            f"exec node '{CONTAINER_ROOT}/bin/cca-benchmark-hook.js'\n",
             encoding="utf-8",
         )
         hook_runner.chmod(0o755)
         codex_wrapper = bundle / "codex-benchmark-wrapper.sh"
         codex_wrapper.write_text(
-            "#!/bin/sh\n"
+            "#!/bin/bash\n"
             'wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
             'real_codex="$wrapper_dir/codex-cca-real"\n'
             'if [ "${1:-}" = "exec" ]; then\n'
             "  shift\n"
-            '  exec "$real_codex" exec --dangerously-bypass-hook-trust "$@"\n'
+            "  args=()\n"
+            '  while [ "$#" -gt 0 ]; do\n'
+            '    if [ "$1" = "--enable" ]; then\n'
+            '      case "${2:-}" in\n'
+            "        unified_exec|code_mode|code_mode_only)\n"
+            "          shift 2\n"
+            "          continue\n"
+            "          ;;\n"
+            "      esac\n"
+            "    fi\n"
+            '    args+=("$1")\n'
+            "    shift\n"
+            "  done\n"
+            '  exec "$real_codex" exec --dangerously-bypass-hook-trust '
+            "--disable unified_exec --disable code_mode "
+            '--disable code_mode_only "${args[@]}"\n'
             "fi\n"
             'exec "$real_codex" "$@"\n',
             encoding="utf-8",
@@ -263,6 +291,11 @@ class CcaCodex(Codex):
                 if self._cca_arm == "current"
                 else None,
                 "strength": "xhigh" if self._cca_arm != "none" else None,
+                "unified_exec": False,
+                # This records the requested CLI override only. The rollout
+                # audit separately verifies whether the model still used code
+                # mode despite the override.
+                "requested_code_mode": False,
             },
             sort_keys=True,
         )

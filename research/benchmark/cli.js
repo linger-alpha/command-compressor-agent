@@ -5,13 +5,22 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+const { buildStaticReplayReport } = require("./static-replay");
+
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const TASKS = [
   "build-cython-ext",
   "pypi-server",
   "sqlite-with-gcov",
   "log-summary-date-ranges",
+  "regex-log",
+  "nginx-request-logging",
+  "extract-elf",
+  "sqlite-db-truncate",
+  "code-from-image",
+  "count-dataset-tokens",
 ];
+const EXPERIMENT_ID = "terminal-bench-2.1-10x3-static-v1";
 const ARMS = ["none", "legacy", "current"];
 const ARM_LABELS = {
   none: "no-compression",
@@ -19,7 +28,7 @@ const ARM_LABELS = {
   current: "cca-current",
 };
 const DEFAULT_SEED = 20260729;
-const DEFAULT_REPEATS = 4;
+const DEFAULT_REPEATS = 3;
 
 async function main(argv = process.argv.slice(2)) {
   const command = argv[0] || "help";
@@ -30,7 +39,7 @@ async function main(argv = process.argv.slice(2)) {
       seed: numberFlag(flags.seed, DEFAULT_SEED),
       repeats: numberFlag(flags.repeats, DEFAULT_REPEATS),
     });
-    const outPath = path.resolve(flags.out || path.join(REPO_ROOT, "research", "artifacts", "tb21-plan.json"));
+    const outPath = path.resolve(flags.out || path.join(REPO_ROOT, "research", "artifacts", "tb21-10x3-plan.json"));
     writeJson(outPath, manifest);
     print({ out: outPath, trials: manifest.trials.length, seed: manifest.seed });
     return 0;
@@ -41,7 +50,7 @@ async function main(argv = process.argv.slice(2)) {
     const trial = manifest.trials.find((entry) => entry.id === flags.trial);
     if (!trial) throw new Error(`Unknown trial id: ${flags.trial}`);
     print(makeJobConfig(trial, {
-      jobsDir: path.resolve(flags["jobs-dir"] || defaultJobsDir()),
+      jobsDir: path.resolve(flags["jobs-dir"] || defaultJobsDir(manifest.experiment_id)),
       repoRoot: REPO_ROOT,
       baselineCommit: manifest.baseline_commit,
       currentCommit: manifest.current_commit,
@@ -55,10 +64,34 @@ async function main(argv = process.argv.slice(2)) {
   if (command === "report") {
     if (!flags.plan) throw new Error("--plan is required");
     const manifest = readJson(path.resolve(flags.plan));
-    const report = reportFromJobs(manifest, path.resolve(flags["jobs-dir"] || defaultJobsDir()));
+    const report = reportFromJobs(
+      manifest,
+      path.resolve(flags["jobs-dir"] || defaultJobsDir(manifest.experiment_id))
+    );
     if (flags.out) writeJson(path.resolve(flags.out), report);
     print(report);
     return report.release_gate.passed === false ? 2 : 0;
+  }
+  if (command === "static-report") {
+    if (!flags.plan) throw new Error("--plan is required");
+    const manifest = readJson(path.resolve(flags.plan));
+    const jobsDir = path.resolve(
+      flags["jobs-dir"] || defaultJobsDir(manifest.experiment_id)
+    );
+    const corpora = observationCorporaFromJobs(manifest, jobsDir);
+    const report = buildStaticReplayReport({
+      repoRoot: REPO_ROOT,
+      experimentId: manifest.experiment_id,
+      baselineCommit: manifest.baseline_commit,
+      currentCommit: manifest.current_commit,
+      expectedTasks: manifest.tasks,
+      primaryRecords: corpora.primary,
+      unionRecords: corpora.union,
+      corpusStats: corpora.stats,
+    });
+    if (flags.out) writeJson(path.resolve(flags.out), report);
+    print(report);
+    return report.static_checks.passed ? 0 : 2;
   }
   throw new Error(`Unknown benchmark command: ${command}`);
 }
@@ -88,7 +121,8 @@ function createManifest(options = {}) {
     trial.order = index + 1;
   });
   return {
-    schema_version: 2,
+    schema_version: 3,
+    experiment_id: EXPERIMENT_ID,
     dataset: "terminal-bench/terminal-bench-2-1@latest",
     model: "gpt-5.6-luna",
     reasoning_effort: "max",
@@ -107,7 +141,7 @@ function makeJobConfig(trial, options = {}) {
   if (!trial || !TASKS.includes(trial.task) || !ARMS.includes(trial.arm)) {
     throw new Error("Invalid benchmark trial");
   }
-  const jobsDir = path.resolve(options.jobsDir || defaultJobsDir());
+  const jobsDir = path.resolve(options.jobsDir || defaultJobsDir(EXPERIMENT_ID));
   const repoRoot = path.resolve(options.repoRoot || REPO_ROOT);
   return {
     job_name: jobName(trial),
@@ -143,7 +177,7 @@ function makeJobConfig(trial, options = {}) {
 function runManifest(planPath, flags = {}) {
   const manifest = readJson(planPath);
   validateManifest(manifest);
-  const jobsDir = path.resolve(flags["jobs-dir"] || defaultJobsDir());
+  const jobsDir = path.resolve(flags["jobs-dir"] || defaultJobsDir(manifest.experiment_id));
   const configDir = path.join(jobsDir, "configs");
   const statePath = path.resolve(flags.state || path.join(jobsDir, "run-state.json"));
   const state = fs.existsSync(statePath)
@@ -158,14 +192,25 @@ function runManifest(planPath, flags = {}) {
   fs.mkdirSync(configDir, { recursive: true });
   const maxTrials = numberFlag(flags["max-trials"], Infinity);
   const selectedTrial = flags.trial ? String(flags.trial) : null;
+  const selectedArm = flags.arm ? String(flags.arm) : null;
+  const selectedTask = flags.task ? String(flags.task) : null;
   if (selectedTrial && !manifest.trials.some((trial) => trial.id === selectedTrial)) {
     throw new Error(`Unknown trial id: ${selectedTrial}`);
+  }
+  if (selectedArm && !ARMS.includes(selectedArm)) {
+    throw new Error(`Unknown arm: ${selectedArm}`);
+  }
+  if (selectedTask && !manifest.tasks.includes(selectedTask)) {
+    throw new Error(`Unknown task: ${selectedTask}`);
   }
   let attempted = 0;
   for (const trial of manifest.trials) {
     if (selectedTrial && trial.id !== selectedTrial) continue;
+    if (selectedArm && trial.arm !== selectedArm) continue;
+    if (selectedTask && trial.task !== selectedTask) continue;
     const previous = state.trials[trial.id];
     if (
+      !flags.force &&
       previous &&
       previous.status === "completed" &&
       harborJobSucceeded(path.join(jobsDir, previous.job_name)) &&
@@ -266,7 +311,14 @@ function summarizeTrials(manifest, results) {
     hook_command_passthrough_observations: 0,
     hook_command_passthrough_raw_tokens_est: 0,
     hook_fallback_observations: 0,
+    captured_observations: 0,
+    captured_output_observations: 0,
+    capture_trials: 0,
+    capture_output_trials: 0,
+    model_visible_compressed_observations: 0,
+    code_mode_exec_calls: 0,
   }]));
+  const taskChecksums = Object.fromEntries(manifest.tasks.map((task) => [task, new Set()]));
   for (const trial of manifest.trials) {
     const result = results.get(trial.id);
     if (!result) continue;
@@ -291,6 +343,19 @@ function summarizeTrials(manifest, results) {
     ]) {
       stats[`hook_${field}`] += Number(result[`cca_hook_${field}`] || 0);
     }
+    stats.captured_observations += Number(result.cca_captured_observations || 0);
+    stats.captured_output_observations += Number(
+      result.cca_captured_output_observations || 0
+    );
+    if (result.cca_observation_artifact) stats.capture_trials += 1;
+    if (Number(result.cca_captured_output_observations || 0) > 0) {
+      stats.capture_output_trials += 1;
+    }
+    stats.model_visible_compressed_observations += Number(
+      result.cca_model_visible_compressed_observations || 0
+    );
+    stats.code_mode_exec_calls += Number(result.cca_code_mode_exec_calls || 0);
+    if (result.task_checksum) taskChecksums[trial.task].add(String(result.task_checksum));
   }
   for (const stats of Object.values(byArm)) {
     stats.input_token_median = median(stats.input_tokens);
@@ -309,7 +374,7 @@ function summarizeTrials(manifest, results) {
 
   const matched = [];
   let matchedExcludedByException = 0;
-  for (const task of TASKS) {
+  for (const task of manifest.tasks) {
     for (let repeat = 1; repeat <= manifest.repeats; repeat += 1) {
       const group = Object.fromEntries(ARMS.map((arm) => {
         const id = `${task}--${arm}--r${repeat}`;
@@ -338,8 +403,27 @@ function summarizeTrials(manifest, results) {
   const hooksEffective =
     byArm.legacy.hook_trials === byArm.legacy.results &&
     byArm.current.hook_trials === byArm.current.results;
+  const captureEffective = Object.values(byArm).every((stats) =>
+    stats.capture_trials === stats.results &&
+    stats.capture_output_trials === stats.results
+  );
+  const taskChecksumValues = Object.fromEntries(
+    Object.entries(taskChecksums).map(([task, values]) => [task, Array.from(values).sort()])
+  );
+  const taskVersionsConsistent =
+    results.size > 0 &&
+    Object.values(taskChecksumValues).every((values) => values.length === 1);
+  const replacementsVisible =
+    byArm.none.model_visible_compressed_observations === 0 &&
+    ["legacy", "current"].every((arm) =>
+      byArm[arm].model_visible_compressed_observations ===
+      byArm[arm].hook_changed_observations
+    );
+  const replacementsExercised =
+    byArm.legacy.hook_changed_observations > 0 &&
+    byArm.current.hook_changed_observations > 0;
   const gates = {
-    all_48_trials_present: allResultsPresent,
+    all_planned_trials_present: allResultsPresent,
     current_passes_at_least_legacy: byArm.current.passed >= byArm.legacy.passed,
     current_within_one_of_no_compression: byArm.current.passed >= byArm.none.passed - 1,
     matched_success_input_tokens_10pct_below_none:
@@ -347,9 +431,14 @@ function summarizeTrials(manifest, results) {
     matched_success_input_tokens_5pct_below_legacy:
       matched.length > 0 && reductionVsLegacy >= 0.05,
     compression_hooks_observed: hooksEffective,
+    tool_results_captured: captureEffective,
+    task_versions_consistent: taskVersionsConsistent,
+    compression_replacements_exercised: replacementsExercised,
+    compression_replacements_model_visible: replacementsVisible,
   };
   return {
     schema_version: 2,
+    experiment_id: manifest.experiment_id || null,
     dataset: manifest.dataset,
     model: manifest.model,
     reasoning_effort: manifest.reasoning_effort,
@@ -366,6 +455,7 @@ function summarizeTrials(manifest, results) {
       current_vs_none: reductionVsNone,
       current_vs_legacy: reductionVsLegacy,
     },
+    task_checksums: taskChecksumValues,
     release_gate: {
       passed: Object.values(gates).every(Boolean),
       checks: gates,
@@ -377,12 +467,83 @@ function withArtifactFacts(result, jobDir) {
   const copy = { ...result };
   const trialDir = firstTrialDirectory(jobDir);
   const gainPath = trialDir && path.join(trialDir, "artifacts", "cca-gain.jsonl");
+  const observationsPath = trialDir &&
+    path.join(trialDir, "artifacts", "cca-observations.jsonl");
   const armPath = trialDir && path.join(trialDir, "artifacts", "cca-arm.json");
   Object.assign(copy, readGainFacts(gainPath));
+  copy.cca_observation_artifact = Boolean(
+    observationsPath && fs.existsSync(observationsPath)
+  );
+  copy.cca_captured_observations = copy.cca_observation_artifact
+    ? readJsonLines(observationsPath).length
+    : 0;
+  copy.cca_captured_output_observations = copy.cca_observation_artifact
+    ? readJsonLines(observationsPath).filter((record) =>
+      String(record.stdout || "").length > 0 ||
+      String(record.stderr || "").length > 0
+    ).length
+    : 0;
   copy.cca_arm_metadata = armPath && fs.existsSync(armPath)
     ? readJson(armPath)
     : null;
+  copy.cca_model_visible_compressed_observations =
+    readModelVisibleCompressionFacts(trialDir);
+  copy.cca_code_mode_exec_calls = readCodeModeExecCalls(trialDir);
   return copy;
+}
+
+function readModelVisibleCompressionFacts(trialDir) {
+  const sessionsDir = trialDir && path.join(trialDir, "agent", "sessions");
+  if (!sessionsDir || !fs.existsSync(sessionsDir)) return 0;
+  let count = 0;
+  for (const pathname of filesUnder(sessionsDir)) {
+    if (!pathname.endsWith(".jsonl")) continue;
+    for (const event of readJsonLines(pathname)) {
+      if (event.type !== "response_item") continue;
+      const payload = event.payload;
+      if (!payload || ![
+        "function_call_output",
+        "custom_tool_call_output",
+      ].includes(payload.type)) continue;
+      const output = typeof payload.output === "string"
+        ? payload.output
+        : JSON.stringify(payload.output || "");
+      if (
+        output.includes("[compressed output") ||
+        output.includes("[command-compressor]")
+      ) count += 1;
+    }
+  }
+  return count;
+}
+
+function readCodeModeExecCalls(trialDir) {
+  const sessionsDir = trialDir && path.join(trialDir, "agent", "sessions");
+  if (!sessionsDir || !fs.existsSync(sessionsDir)) return 0;
+  let count = 0;
+  for (const pathname of filesUnder(sessionsDir)) {
+    if (!pathname.endsWith(".jsonl")) continue;
+    for (const event of readJsonLines(pathname)) {
+      if (event.type !== "response_item") continue;
+      const payload = event.payload;
+      if (
+        payload &&
+        payload.type === "custom_tool_call" &&
+        payload.name === "exec"
+      ) count += 1;
+    }
+  }
+  return count;
+}
+
+function filesUnder(root) {
+  const output = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const pathname = path.join(root, entry.name);
+    if (entry.isDirectory()) output.push(...filesUnder(pathname));
+    else if (entry.isFile()) output.push(pathname);
+  }
+  return output;
 }
 
 function readGainFacts(gainPath) {
@@ -430,6 +591,92 @@ function readGainFacts(gainPath) {
   return facts;
 }
 
+function readJsonLines(pathname) {
+  if (!pathname || !fs.existsSync(pathname)) return [];
+  const records = [];
+  for (const line of fs.readFileSync(pathname, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch {
+      continue;
+    }
+  }
+  return records;
+}
+
+function observationCorporaFromJobs(manifest, jobsDir) {
+  validateManifest(manifest);
+  const primary = [];
+  const union = [];
+  const stats = {
+    planned_trials: manifest.trials.length,
+    trials_with_results: 0,
+    trials_with_capture: 0,
+    clean_success_trials: 0,
+    observations: 0,
+    primary_observations: 0,
+    by_arm: Object.fromEntries(ARMS.map((arm) => [arm, {
+      trials_with_capture: 0,
+      observations: 0,
+    }])),
+    primary_tasks: [],
+    stale_results: [],
+  };
+  const primaryTasks = new Set();
+  for (const trial of manifest.trials) {
+    const jobDir = latestJobDirectory(jobsDir, trial);
+    if (!jobDir) continue;
+    const result = loadTrialResult(jobDir);
+    if (!result) continue;
+    stats.trials_with_results += 1;
+    const enriched = withArtifactFacts(result, jobDir);
+    const compatibility = captureMatchesManifest(trial, enriched, manifest);
+    if (!compatibility.matches) {
+      stats.stale_results.push({
+        trial_id: trial.id,
+        job_dir: jobDir,
+        reason: compatibility.reason,
+      });
+      continue;
+    }
+    if (trialCompleted(result)) stats.clean_success_trials += 1;
+    const trialDir = firstTrialDirectory(jobDir);
+    const observationsPath = trialDir &&
+      path.join(trialDir, "artifacts", "cca-observations.jsonl");
+    if (!observationsPath || !fs.existsSync(observationsPath)) continue;
+    const observations = readJsonLines(observationsPath);
+    stats.trials_with_capture += 1;
+    stats.by_arm[trial.arm].trials_with_capture += 1;
+    stats.by_arm[trial.arm].observations += observations.length;
+    stats.observations += observations.length;
+    for (const [index, observation] of observations.entries()) {
+      const record = {
+        id: `${trial.id}:${index + 1}`,
+        source: trial.task,
+        task: trial.task,
+        arm: trial.arm,
+        repeat: trial.repeat,
+        trial_id: trial.id,
+        command: String(observation.command || ""),
+        stdout: String(observation.stdout || ""),
+        stderr: String(observation.stderr || ""),
+        exit_code: observation.exit_code == null
+          ? null
+          : Number(observation.exit_code),
+      };
+      union.push(record);
+      if (trial.arm === "none") {
+        primary.push(record);
+        primaryTasks.add(trial.task);
+      }
+    }
+  }
+  stats.primary_observations = primary.length;
+  stats.primary_tasks = Array.from(primaryTasks).sort();
+  return { primary, union, stats };
+}
+
 function jobMatchesManifest(jobDir, trial, manifest) {
   const result = loadTrialResult(jobDir);
   if (!result) return false;
@@ -441,6 +688,21 @@ function jobMatchesManifest(jobDir, trial, manifest) {
 }
 
 function resultMatchesManifest(trial, result, manifest) {
+  const runtimeCompatibility = captureMatchesManifest(trial, result, manifest);
+  if (!runtimeCompatibility.matches) return runtimeCompatibility;
+  const metadata = result && result.cca_arm_metadata;
+  if (Number(manifest.schema_version || 0) >= 3) {
+    if (metadata.unified_exec !== false) {
+      return { matches: false, reason: "unified-exec-must-be-disabled" };
+    }
+    if (metadata.requested_code_mode !== false) {
+      return { matches: false, reason: "code-mode-disable-must-be-requested" };
+    }
+  }
+  return { matches: true, reason: null };
+}
+
+function captureMatchesManifest(trial, result, manifest) {
   const metadata = result && result.cca_arm_metadata;
   if (!metadata || metadata.arm !== trial.arm) {
     return { matches: false, reason: "missing-or-mismatched-arm-metadata" };
@@ -534,7 +796,10 @@ function validateManifest(manifest) {
   if (!/^[a-f0-9]{40}$/.test(String(manifest.current_commit || ""))) {
     throw new Error("Benchmark manifest must pin current_commit; regenerate the plan");
   }
-  const expected = TASKS.length * ARMS.length * Number(manifest.repeats);
+  if (!Array.isArray(manifest.tasks) || !manifest.tasks.length) {
+    throw new Error("Benchmark manifest must include tasks");
+  }
+  const expected = manifest.tasks.length * ARMS.length * Number(manifest.repeats);
   if (manifest.trials.length !== expected) {
     throw new Error(`Expected ${expected} trials, found ${manifest.trials.length}`);
   }
@@ -597,8 +862,13 @@ function retryJobName(trial, attempt) {
   return attempt <= 1 ? base : `${base}-retry${attempt - 1}`;
 }
 
-function defaultJobsDir() {
-  return path.join(REPO_ROOT, "research", "jobs", "terminal-bench-2.1");
+function defaultJobsDir(experimentId) {
+  return path.join(
+    REPO_ROOT,
+    "research",
+    "jobs",
+    String(experimentId || "terminal-bench-2.1")
+  );
 }
 
 function parseFlags(args) {
@@ -644,10 +914,11 @@ function help() {
     "CCA Terminal-Bench 2.1 research harness (excluded from npm)",
     "",
     "Usage:",
-    "  node research/benchmark/cli.js plan [--out research/artifacts/tb21-plan.json]",
+    "  node research/benchmark/cli.js plan [--out research/artifacts/tb21-10x3-plan.json]",
     "  node research/benchmark/cli.js config --plan PLAN --trial TRIAL_ID",
-    "  node research/benchmark/cli.js run --plan PLAN [--trial TRIAL_ID] [--max-trials 1]",
+    "  node research/benchmark/cli.js run --plan PLAN [--trial TRIAL_ID] [--arm ARM] [--task TASK] [--max-trials N] [--force]",
     "  node research/benchmark/cli.js report --plan PLAN [--out REPORT.json]",
+    "  node research/benchmark/cli.js static-report --plan PLAN [--out STATIC_REPORT.json]",
     "",
   ].join("\n"));
   return 0;
@@ -669,6 +940,7 @@ module.exports = {
   ARMS,
   ARM_LABELS,
   DEFAULT_SEED,
+  EXPERIMENT_ID,
   TASKS,
   createManifest,
   harborResultSucceeded,
@@ -678,6 +950,11 @@ module.exports = {
   median,
   reportFromJobs,
   readGainFacts,
+  readJsonLines,
+  readModelVisibleCompressionFacts,
+  observationCorporaFromJobs,
+  captureMatchesManifest,
+  readCodeModeExecCalls,
   resultMatchesManifest,
   retryJobName,
   summarizeTrials,

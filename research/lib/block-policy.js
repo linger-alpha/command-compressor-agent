@@ -318,8 +318,10 @@ function evaluatePolicyAgainstLegacy(records, input, options = {}) {
         changed: 0,
         critical: 0,
         criticalRetained: 0,
+        legacyCriticalRetained: 0,
         protected: 0,
         protectedRetained: 0,
+        legacyProtectedRetained: 0,
         diagnostics: 0,
         tierLines: {},
         tierBlocks: {},
@@ -334,12 +336,12 @@ function evaluatePolicyAgainstLegacy(records, input, options = {}) {
         const observation = observationFromRecord(record);
         const legacyResult = legacy.compressObservation(observation, {
           strength: "xhigh",
-          rawDir: path.join(tempDir, "legacy-raw"),
+          rawDir: path.join(tempDir, "old-raw"),
           rulesPath: path.join(legacy.root, "rules", "default-rules.json"),
         });
         const currentResult = compressObservation(observation, {
           strength: "xhigh",
-          rawDir: path.join(tempDir, "candidate-raw"),
+          rawDir: path.join(tempDir, "new-raw"),
           rulesPath,
         });
         const legacyEffective = legacyResult.changed
@@ -378,18 +380,25 @@ function evaluatePolicyAgainstLegacy(records, input, options = {}) {
           candidate_tiers: tierCounts(currentResult.plan && currentResult.plan.blocks),
         });
         const effectiveText = currentResult.text;
+        const legacyEffectiveText = legacyResult.text;
         observePlanDiagnostics(currentResult.plan, totals);
         const originalLines = outputLinesFromObservation(observation);
         const criticalLines = criticalLinesForOutput(originalLines);
         totals.critical += criticalLines.length;
         const missingCritical = criticalLines.filter((line) => !effectiveText.includes(line));
         totals.criticalRetained += criticalLines.length - missingCritical.length;
+        totals.legacyCriticalRetained += criticalLines.filter((line) =>
+          legacyEffectiveText.includes(line)
+        ).length;
         const protectedBlocks = splitBlocks(originalLines).filter((block) =>
           !block.separator && isProtectedBlock(block, candidate)
         );
         totals.protected += protectedBlocks.length;
         totals.protectedRetained += protectedBlocks.filter((block) =>
           effectiveText.includes(block.lines.join("\n"))
+        ).length;
+        totals.legacyProtectedRetained += protectedBlocks.filter((block) =>
+          legacyEffectiveText.includes(block.lines.join("\n"))
         ).length;
         if (hasSyntheticDiagnostics(effectiveText)) totals.diagnostics += 1;
         if (missingCritical.length && lossExamples.length < 8) {
@@ -431,8 +440,14 @@ function evaluatePolicyAgainstLegacy(records, input, options = {}) {
         critical_fact_retention: totals.critical
           ? totals.criticalRetained / totals.critical
           : 1,
+        legacy_critical_fact_retention: totals.critical
+          ? totals.legacyCriticalRetained / totals.critical
+          : 1,
         protected_block_retention: totals.protected
           ? totals.protectedRetained / totals.protected
+          : 1,
+        legacy_protected_block_retention: totals.protected
+          ? totals.legacyProtectedRetained / totals.protected
           : 1,
         critical_lines: totals.critical,
         protected_blocks: totals.protected,
