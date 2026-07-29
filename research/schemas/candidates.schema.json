@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidates"],
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "category",
+          "rationale",
+          "trigger_regex",
+          "output_regex",
+          "keep_patterns",
+          "strip_patterns",
+          "keep_first_n",
+          "keep_last_n",
+          "max_lines",
+          "priority",
+          "confidence"
+        ],
+        "properties": {
+          "rule_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$" },
+          "category": { "type": "string", "enum": ["strong", "weak"] },
+          "rationale": { "type": "string", "maxLength": 1000 },
+          "trigger_regex": { "type": "string", "maxLength": 500 },
+          "output_regex": { "type": "string", "maxLength": 500 },
+          "keep_patterns": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "maxLength": 500 }
+          },
+          "strip_patterns": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "maxLength": 500 }
+          },
+          "keep_first_n": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "keep_last_n": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "max_lines": { "type": "integer", "minimum": 10, "maximum": 300 },
+          "priority": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

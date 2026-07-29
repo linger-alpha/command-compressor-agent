@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/compressor.test.js && node test/pipeline.test.js && node test/adapters.test.js && node test/install.test.js && node test/cli.test.js",
+    "test": "node test/compressor.test.js && node test/pipeline.test.js && node test/adapters.test.js && node test/install.test.js && node test/cli.test.js && node research/test/research.test.js",
     "smoke": "node bin/cca.js status --json"
   },
   "keywords": [

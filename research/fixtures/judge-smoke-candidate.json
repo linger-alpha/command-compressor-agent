@@ -1,0 +1,19 @@
+{
+  "rule_id": "research_package_progress_smoke",
+  "category": "strong",
+  "rationale": "Research-only smoke candidate for exercising deterministic replay and the independent judge.",
+  "trigger_regex": "\\b(?:apt-get|pip3?|npm\\s+install)\\b",
+  "output_regex": "\\b(?:Downloading|Collecting|Get:\\d+|Progress: resolved)\\b",
+  "keep_patterns": [
+    "\\b(?:ERROR|Error|WARNING|Warning|FAILED|Traceback|Exception|Successfully installed|installed|vulnerabilities)\\b"
+  ],
+  "strip_patterns": [
+    "^\\s*(?:Downloading|Collecting|Get:\\d+)[^\\r\\n]*$",
+    "^\\s*Progress: resolved[^\\r\\n]*$"
+  ],
+  "keep_first_n": 8,
+  "keep_last_n": 16,
+  "max_lines": 80,
+  "priority": 95,
+  "confidence": 0.9
+}
