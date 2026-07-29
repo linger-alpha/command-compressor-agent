@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidates"],
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
+  },
+  "$defs": {
+    "tier": {
+      "type": "string",
+      "enum": ["preserve", "light", "aggressive"]
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tier", "kind", "pattern", "flags"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$"
+        },
+        "tier": {
+          "$ref": "#/$defs/tier"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["", "opaque_encoded", "dense_semantic", "visual", "progress", "duplicate"],
+          "description": "Use a non-empty kind only for a built-in structural signal; then pattern and flags must be empty strings."
+        },
+        "pattern": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "JavaScript regex source without inline flag groups. Keep empty for kind signals."
+        },
+        "flags": {
+          "type": "string",
+          "enum": ["", "i", "m", "im", "mi"],
+          "description": "JavaScript regex flags kept separate from pattern. Keep empty for kind signals."
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keep_first_n", "keep_last_n", "max_lines"],
+      "properties": {
+        "keep_first_n": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "keep_last_n": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "max_lines": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "rationale",
+        "default_tier",
+        "signals",
+        "opaque_encoded",
+        "dense_semantic",
+        "visual",
+        "planner",
+        "confidence"
+      ],
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$"
+        },
+        "rationale": {
+          "type": "string",
+          "maxLength": 1500
+        },
+        "default_tier": {
+          "type": "string",
+          "enum": ["light", "aggressive"]
+        },
+        "signals": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/signal"
+          }
+        },
+        "opaque_encoded": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum_encoded_chars", "minimum_encoded_lines"],
+          "properties": {
+            "minimum_encoded_chars": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 256
+            },
+            "minimum_encoded_lines": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2
+            }
+          }
+        },
+        "dense_semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum_lines", "minimum_numbered_lines", "minimum_numbered_ratio"],
+          "properties": {
+            "minimum_lines": {
+              "type": "integer",
+              "minimum": 20,
+              "maximum": 160
+            },
+            "minimum_numbered_lines": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100
+            },
+            "minimum_numbered_ratio": {
+              "type": "number",
+              "minimum": 0.2,
+              "maximum": 0.9
+            }
+          }
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum_matrix_lines"],
+          "properties": {
+            "minimum_matrix_lines": {
+              "type": "integer",
+              "minimum": 4,
+              "maximum": 20
+            }
+          }
+        },
+        "planner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["light", "aggressive"],
+          "properties": {
+            "light": {
+              "$ref": "#/$defs/strategy"
+            },
+            "aggressive": {
+              "$ref": "#/$defs/strategy"
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

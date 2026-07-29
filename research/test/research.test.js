@@ -6,6 +6,19 @@ const os = require("os");
 const path = require("path");
 
 const { auditCorpus } = require("../lib/audit");
+const {
+  buildTrainingBlockSamples,
+  candidateFromRules,
+  criticalLinesForOutput,
+  deterministicPolicyGate,
+  evolveBlockPolicy,
+  finalizeBlockPolicy,
+  isCriticalFactLine,
+  loadPolicyRecords,
+  promoteBlockPolicy,
+  replayBlockPolicy,
+  validatePolicyCandidate,
+} = require("../lib/block-policy");
 const { assignSplits, importCorpus } = require("../lib/corpus");
 const {
   DEFAULT_GENERATOR_EFFORT,
@@ -176,6 +189,50 @@ function writeJsonl(pathname, items) {
     assert.strictEqual(DEFAULT_JUDGE_EFFORT, "high");
   }
 
+  const bundledRules = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "rules", "default-rules.json"), "utf8")
+  );
+  const bootstrapPolicy = candidateFromRules(bundledRules, "bootstrap_policy");
+  {
+    const validation = validatePolicyCandidate(bootstrapPolicy);
+    assert.strictEqual(validation.valid, true, validation.errors.join("; "));
+    const normalizedModelPolicy = {
+      ...bootstrapPolicy,
+      signals: bootstrapPolicy.signals.map((signal) => {
+        if (signal.kind) return { ...signal, pattern: "(?im)", flags: "im" };
+        if (signal.id === "traceback_exception") {
+          return { ...signal, pattern: `(?im)${signal.pattern}`, flags: "im" };
+        }
+        return signal;
+      }),
+    };
+    assert.strictEqual(
+      validatePolicyCandidate(normalizedModelPolicy).valid,
+      true,
+      "research normalization may remove schema placeholders and move inline flags, without changing policy"
+    );
+    const unsafe = {
+      ...bootstrapPolicy,
+      signals: bootstrapPolicy.signals.map((signal) =>
+        signal.id === "opaque_encoded" ? { ...signal, tier: "aggressive" } : signal
+      ),
+    };
+    assert.strictEqual(validatePolicyCandidate(unsafe).valid, false);
+    assert.strictEqual(isCriticalFactLine("  [--watchdog-timeout WATCHDOG_TIMEOUT]"), false);
+    assert.strictEqual(isCriticalFactLine("Command timed out after 30 seconds"), true);
+    assert.strictEqual(isCriticalFactLine("TimeoutError: request failed"), true);
+    assert.deepStrictEqual(
+      criticalLinesForOutput([
+        "> echoed heredoc source",
+        "ordinary output",
+        "> assert value == 2",
+        "E   AssertionError: expected 2",
+      ]),
+      ["> assert value == 2", "E   AssertionError: expected 2"],
+      "shell continuation prompts are not failure context unless adjacent to an actual failure"
+    );
+  }
+
   const candidate = {
     rule_id: "research_download_noise",
     category: "weak",
@@ -234,6 +291,186 @@ function writeJsonl(pathname, items) {
     ["validation-match"],
     "candidate-aware validation should scan beyond non-matching held-out records"
   );
+
+  {
+    const policyCorpus = path.join(importRoot, "policy-corpus.jsonl");
+    writeJsonl(policyCorpus, [
+      {
+        id: "read-only",
+        source: "fixture",
+        session_id: "one",
+        split: "validation",
+        command: "git diff | sed -n '1,80p'",
+        stdout: "diff detail ".repeat(100),
+        stderr: "",
+        exit_code: 0,
+      },
+      {
+        id: "general",
+        source: "fixture",
+        session_id: "two",
+        split: "validation",
+        command: "python build.py",
+        stdout: Array.from({ length: 200 }, (_, index) =>
+          `Downloading artifact ${index} ${index % 100}%|████| ${index}/200 [1MB/s]`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+      {
+        id: "general-test",
+        source: "fixture",
+        session_id: "three",
+        split: "test",
+        command: "python build.py",
+        stdout: Array.from({ length: 220 }, (_, index) =>
+          `Downloading test artifact ${index} ${index % 100}%|████| ${index}/220 [1MB/s]`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+    ]);
+    const records = await loadPolicyRecords(policyCorpus, {
+      split: "validation",
+      limit: 10,
+      minOutputChars: 20,
+      rulesPath: path.join(repoRoot, "rules", "default-rules.json"),
+    });
+    assert.deepStrictEqual(records.map((record) => record.id), ["general"]);
+    const blocks = buildTrainingBlockSamples(records, { limit: 4 });
+    assert(blocks.length > 0);
+    assert(blocks.every((block) => typeof block.sample_class === "string"));
+    const balancedBlocks = buildTrainingBlockSamples([
+      {
+        id: "a-progress",
+        source: "alpha",
+        command: "custom build",
+        stdout: Array.from(
+          { length: 30 },
+          (_, index) => `Downloading alpha-${index} ${index}%|====| ${index}/30 [1MB/s]`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+      {
+        id: "a-ordinary",
+        source: "alpha",
+        command: "custom build",
+        stdout: Array.from(
+          { length: 30 },
+          (_, index) => `compiled alpha module ${index} successfully`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+      {
+        id: "b-progress",
+        source: "beta",
+        command: "custom build",
+        stdout: Array.from(
+          { length: 30 },
+          (_, index) => `Downloading beta-${index} ${index}%|====| ${index}/30 [1MB/s]`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+      {
+        id: "b-ordinary",
+        source: "beta",
+        command: "custom build",
+        stdout: Array.from(
+          { length: 30 },
+          (_, index) => `compiled beta module ${index} successfully`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+    ], { limit: 4, seed: "balanced" });
+    assert.deepStrictEqual(
+      new Set(balancedBlocks.map((block) => block.source)),
+      new Set(["alpha", "beta"])
+    );
+    assert.deepStrictEqual(
+      new Set(balancedBlocks.map((block) => block.sample_class)),
+      new Set(["ordinary", "progress"])
+    );
+    const replay = await replayBlockPolicy({
+      repoRoot,
+      corpusPath: policyCorpus,
+      candidate: bootstrapPolicy,
+      split: "validation",
+      limit: 10,
+      repetitions: 2,
+      minOutputChars: 20,
+      baselineCommit: "7830b17",
+      maxExamples: 1,
+    });
+    assert.strictEqual(replay.repeats.length, 2);
+    assert(replay.repeats.every((entry) => entry.eligible_records === 1));
+    const gate = deterministicPolicyGate(replay);
+    assert.strictEqual(gate.candidate_valid, true);
+    assert.strictEqual(gate.critical_fact_retention_100pct, true);
+    assert.strictEqual(gate.protected_block_retention_100pct, true);
+
+    const validationGate = {
+      candidate_valid: true,
+      held_out_records_present: true,
+      critical_fact_retention_100pct: true,
+      protected_block_retention_100pct: true,
+      no_model_visible_diagnostics: true,
+      every_repeat_incremental_reduction_5pct: true,
+      held_out_ai_pass_99pct: true,
+    };
+    const validationState = {
+      configuration: {
+        generator_model: "gpt-5.6-luna",
+        generator_effort: "max",
+        judge_model: "gpt-5.6-sol",
+        judge_effort: "high",
+        baseline_commit: "7830b17",
+      },
+      evaluated: {
+        candidate: bootstrapPolicy,
+        replay,
+        judge: { approved: true, pass_rate: 1, complaints: [] },
+        gate: validationGate,
+        accepted: true,
+      },
+    };
+    const finalState = await finalizeBlockPolicy(validationState, {
+      repoRoot,
+      corpusPath: policyCorpus,
+      limit: 10,
+      repetitions: 2,
+      minOutputChars: 20,
+      baselineCommit: "7830b17",
+    });
+    assert.strictEqual(finalState.status, "accepted");
+    assert.strictEqual(finalState.accepted[0].test_gate.critical_fact_retention_100pct, true);
+    assert.deepStrictEqual(finalState.accepted[0].test_complaints, []);
+
+    const rulesInput = path.join(importRoot, "block-policy-rules.json");
+    const rulesOutput = path.join(importRoot, "block-policy-promoted.json");
+    const finalStatePath = path.join(importRoot, "block-policy-final.json");
+    fs.copyFileSync(path.join(repoRoot, "rules", "default-rules.json"), rulesInput);
+    fs.writeFileSync(finalStatePath, `${JSON.stringify(finalState)}\n`, "utf8");
+    const promotedPolicy = promoteBlockPolicy(finalStatePath, rulesInput, rulesOutput);
+    assert.strictEqual(promotedPolicy.promoted, bootstrapPolicy.policy_id);
+    const promotedRules = JSON.parse(fs.readFileSync(rulesOutput, "utf8"));
+    assert.strictEqual(promotedRules.block_policy.provenance.status, "accepted");
+    assert.strictEqual(promotedRules.block_policy.provenance.generator_model, "gpt-5.6-luna");
+    assert.strictEqual(promotedRules.block_policy.rationale, undefined);
+
+    const unsafeStatePath = path.join(importRoot, "block-policy-no-test.json");
+    fs.writeFileSync(unsafeStatePath, `${JSON.stringify({
+      accepted: [{ candidate: bootstrapPolicy, gate: validationGate }],
+    })}\n`, "utf8");
+    assert.throws(
+      () => promoteBlockPolicy(unsafeStatePath, rulesInput, rulesOutput),
+      /test gate/,
+      "validation and judge approval alone must never authorize production promotion"
+    );
+  }
 
   {
     const progress = Array.from(
@@ -319,6 +556,64 @@ function writeJsonl(pathname, items) {
     assert.strictEqual(dryState.configuration.judge_model, "gpt-5.6-sol");
     assert.strictEqual(dryState.configuration.judge_effort, "high");
     assert.strictEqual(dryState.configuration.full_trajectories_uploaded, false);
+
+    const policyDryState = await evolveBlockPolicy({
+      repoRoot,
+      corpusPath: dryCorpus,
+      outPath: path.join(importRoot, "dry-policy-state.json"),
+      dryRun: true,
+      minOutputChars: 20,
+    });
+    assert.strictEqual(policyDryState.status, "planned");
+    assert.strictEqual(policyDryState.kind, "block-policy-evolution");
+    assert.strictEqual(policyDryState.configuration.generator_effort, "max");
+    assert.strictEqual(policyDryState.configuration.judge_effort, "high");
+    assert.strictEqual(policyDryState.configuration.full_trajectories_uploaded, false);
+    assert.match(policyDryState.configuration.remote_block_sample_sha256, /^[a-f0-9]{64}$/);
+
+    const priorPolicyStatePath = path.join(importRoot, "prior-policy-state.json");
+    fs.writeFileSync(priorPolicyStatePath, `${JSON.stringify({
+      ...policyDryState,
+      status: "no-policy-passed",
+      configuration: {
+        ...policyDryState.configuration,
+        max_rounds: 1,
+      },
+      rounds: [{ round: 1, generated: 1, evaluated: [] }],
+      frozen: [{
+        policy_id: "rejected_policy",
+        candidate: { policy_id: "rejected_policy" },
+        complaints: ["Failed gate: held_out_ai_pass_99pct"],
+      }],
+    }, null, 2)}\n`, "utf8");
+    const resumedPolicyState = await evolveBlockPolicy({
+      repoRoot,
+      corpusPath: dryCorpus,
+      outPath: path.join(importRoot, "resumed-policy-state.json"),
+      resumeStatePath: priorPolicyStatePath,
+      rounds: 2,
+      dryRun: true,
+      minOutputChars: 20,
+    });
+    assert.strictEqual(resumedPolicyState.status, "planned");
+    assert.strictEqual(resumedPolicyState.rounds.length, 1);
+    assert.strictEqual(resumedPolicyState.frozen.length, 1);
+    assert.strictEqual(resumedPolicyState.configuration.max_rounds, 2);
+    assert.strictEqual(resumedPolicyState.configuration.repetitions, 3);
+    assert.strictEqual(resumedPolicyState.resumed_from, priorPolicyStatePath);
+    await assert.rejects(
+      () => evolveBlockPolicy({
+        repoRoot,
+        corpusPath: dryCorpus,
+        outPath: path.join(importRoot, "mismatched-policy-state.json"),
+        resumeStatePath: priorPolicyStatePath,
+        rounds: 2,
+        dryRun: true,
+        minOutputChars: 20,
+        seed: "different-seed",
+      }),
+      /Resume configuration mismatch for seed/
+    );
   }
 
   console.log("research tests passed");

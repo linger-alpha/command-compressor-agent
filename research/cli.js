@@ -5,6 +5,15 @@ const fs = require("fs");
 const path = require("path");
 
 const { auditCorpus } = require("./lib/audit");
+const {
+  candidateFromRules,
+  deterministicPolicyGate,
+  evolveBlockPolicy,
+  finalizeBlockPolicy,
+  judgeBlockPolicies,
+  promoteBlockPolicy,
+  replayBlockPolicy,
+} = require("./lib/block-policy");
 const { importCorpus } = require("./lib/corpus");
 const {
   DEFAULT_GENERATOR_EFFORT,
@@ -66,6 +75,141 @@ async function main(argv = process.argv.slice(2)) {
       dryRun: Boolean(flags["dry-run"]),
     });
     print(state);
+    return 0;
+  }
+  if (command === "policy-evolve") {
+    if (!flags.corpus) throw new Error("--corpus is required");
+    const state = await evolveBlockPolicy({
+      repoRoot: REPO_ROOT,
+      corpusPath: flags.corpus,
+      outPath: flags.out || path.join(REPO_ROOT, "research", "artifacts", "block-policy-evolution.json"),
+      rounds: flags.rounds,
+      generatorModel: flags["generator-model"] || DEFAULT_GENERATOR_MODEL,
+      generatorEffort: flags["generator-effort"] || DEFAULT_GENERATOR_EFFORT,
+      judgeModel: flags["judge-model"] || DEFAULT_JUDGE_MODEL,
+      judgeEffort: flags["judge-effort"] || DEFAULT_JUDGE_EFFORT,
+      generatorSamples: flags["generator-samples"],
+      trainingRecords: flags["training-records"],
+      validationSamples: flags["validation-samples"],
+      repetitions: flags.repetitions,
+      maxSampleChars: flags["max-sample-chars"],
+      maxPromptChars: flags["max-prompt-chars"],
+      minOutputChars: flags["min-output-chars"],
+      baselineCommit: flags["baseline-commit"],
+      codexBin: flags["codex-bin"],
+      timeoutMs: flags["timeout-ms"],
+      seed: flags.seed,
+      resumeStatePath: flags.resume,
+      dryRun: Boolean(flags["dry-run"]),
+    });
+    print(state);
+    return 0;
+  }
+  if (command === "policy-replay") {
+    if (!flags.corpus || !flags.candidate) throw new Error("--corpus and --candidate are required");
+    const candidate = loadPolicyCandidate(flags.candidate, flags["policy-id"]);
+    const replay = await replayBlockPolicy({
+      repoRoot: REPO_ROOT,
+      corpusPath: flags.corpus,
+      candidate,
+      split: flags.split || "validation",
+      limit: flags.limit || flags["validation-samples"],
+      repetitions: flags.repetitions,
+      minOutputChars: flags["min-output-chars"],
+      baselineCommit: flags["baseline-commit"] || "7830b17",
+      seed: flags.seed,
+      maxExamples: flags["max-examples"],
+    });
+    print(replay);
+    return 0;
+  }
+  if (command === "policy-judge") {
+    if (!flags.corpus || !flags.candidate) throw new Error("--corpus and --candidate are required");
+    const candidate = loadPolicyCandidate(flags.candidate, flags["policy-id"]);
+    const candidateSource = JSON.parse(fs.readFileSync(flags.candidate, "utf8"));
+    const replay = await replayBlockPolicy({
+      repoRoot: REPO_ROOT,
+      corpusPath: flags.corpus,
+      candidate,
+      split: flags.split || "validation",
+      limit: flags.limit || flags["validation-samples"],
+      repetitions: flags.repetitions,
+      minOutputChars: flags["min-output-chars"],
+      baselineCommit: flags["baseline-commit"] || "7830b17",
+      seed: flags.seed,
+      maxExamples: flags["max-examples"] || 3,
+    });
+    const verdicts = judgeBlockPolicies([{ candidate, replay }], {
+      codexBin: flags["codex-bin"],
+      cwd: REPO_ROOT,
+      judgeModel: flags["judge-model"] || DEFAULT_JUDGE_MODEL,
+      judgeEffort: flags["judge-effort"] || DEFAULT_JUDGE_EFFORT,
+      maxPromptChars: flags["max-prompt-chars"],
+      timeoutMs: flags["timeout-ms"],
+    });
+    const judge = verdicts.find((entry) => entry.policy_id === candidate.policy_id) || {};
+    const gate = {
+      ...deterministicPolicyGate(replay),
+      held_out_ai_pass_99pct: judge.approved === true && Number(judge.pass_rate) >= 0.99,
+    };
+    const evaluated = {
+      candidate,
+      replay,
+      judge,
+      gate,
+      accepted: Object.values(gate).every(Boolean),
+    };
+    const state = {
+      schema_version: 1,
+      kind: "block-policy-evaluation",
+      status: evaluated.accepted ? "validation-accepted" : "validation-rejected",
+      configuration: {
+        generator_model: flags["generator-model"] ||
+          (candidateSource.configuration && candidateSource.configuration.generator_model) ||
+          "pre-generated-candidate",
+        generator_effort: flags["generator-effort"] ||
+          (candidateSource.configuration && candidateSource.configuration.generator_effort) ||
+          "recorded-in-candidate-source",
+        judge_model: flags["judge-model"] || DEFAULT_JUDGE_MODEL,
+        judge_effort: flags["judge-effort"] || DEFAULT_JUDGE_EFFORT,
+        baseline_commit: flags["baseline-commit"] || "7830b17",
+      },
+      evaluated,
+      validation_accepted: evaluated.accepted ? [evaluated] : [],
+      accepted: [],
+    };
+    if (flags.out) fs.writeFileSync(path.resolve(flags.out), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    print(state);
+    return evaluated.accepted ? 0 : 2;
+  }
+  if (command === "policy-finalize") {
+    if (!flags.corpus || !flags.state) throw new Error("--corpus and --state are required");
+    const sourceState = JSON.parse(fs.readFileSync(flags.state, "utf8"));
+    const state = await finalizeBlockPolicy(sourceState, {
+      repoRoot: REPO_ROOT,
+      corpusPath: flags.corpus,
+      policyId: flags["policy-id"],
+      limit: flags.limit || 300,
+      repetitions: flags.repetitions || 3,
+      minOutputChars: flags["min-output-chars"],
+      baselineCommit: flags["baseline-commit"] || "7830b17",
+      seed: flags.seed,
+      maxExamples: flags["max-examples"] || 3,
+    });
+    if (flags.out) fs.writeFileSync(path.resolve(flags.out), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    print(state);
+    return state.status === "accepted" ? 0 : 2;
+  }
+  if (command === "policy-promote") {
+    if (!flags.state) throw new Error("--state is required");
+    const rulesPath = path.resolve(flags.rules || path.join(REPO_ROOT, "rules", "default-rules.json"));
+    const outPath = path.resolve(flags.out || rulesPath);
+    print(promoteBlockPolicy(path.resolve(flags.state), rulesPath, outPath, {
+      ...(flags["generator-model"] ? { generator_model: flags["generator-model"] } : {}),
+      ...(flags["generator-effort"] ? { generator_effort: flags["generator-effort"] } : {}),
+      ...(flags["judge-model"] ? { judge_model: flags["judge-model"] } : {}),
+      ...(flags["judge-effort"] ? { judge_effort: flags["judge-effort"] } : {}),
+    }));
     return 0;
   }
   if (command === "audit") {
@@ -174,6 +318,34 @@ function parseSource(value) {
   };
 }
 
+function loadPolicyCandidate(pathname, policyId) {
+  const input = JSON.parse(fs.readFileSync(pathname, "utf8"));
+  if (input.block_policy || input.importance) {
+    const fallbackId = path.basename(pathname, path.extname(pathname))
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .toLowerCase();
+    return candidateFromRules(input, fallbackId);
+  }
+  const candidates = [];
+  if (input.candidate) candidates.push(input.candidate);
+  if (input.policy_id && input.signals) candidates.push(input);
+  for (const entry of input.accepted || []) if (entry.candidate) candidates.push(entry.candidate);
+  for (const round of input.rounds || []) {
+    for (const entry of round.evaluated || []) if (entry.candidate) candidates.push(entry.candidate);
+  }
+  for (const entry of input.frozen || []) if (entry.candidate) candidates.push(entry.candidate);
+  const unique = Array.from(new Map(candidates.map((candidate) => [candidate.policy_id, candidate])).values());
+  if (policyId) {
+    const selected = unique.find((candidate) => candidate.policy_id === policyId);
+    if (!selected) throw new Error(`Policy ${policyId} was not found in ${pathname}`);
+    return selected;
+  }
+  if (unique.length !== 1) {
+    throw new Error(`Candidate file contains ${unique.length} policies; select one with --policy-id`);
+  }
+  return unique[0];
+}
+
 function print(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -186,6 +358,11 @@ function help() {
     "  node research/cli.js import --codex-source rtx=/path --public-source terminaltraj=/path --out corpus.jsonl",
     "  node research/cli.js audit --corpus corpus.jsonl",
     "  node research/cli.js evolve --corpus corpus.jsonl [--generator-effort max] [--judge-effort high]",
+    "  node research/cli.js policy-evolve --corpus corpus.jsonl [--repetitions 3] [--resume prior-state.json] [--dry-run]",
+    "  node research/cli.js policy-replay --corpus corpus.jsonl --candidate rules/default-rules.json [--repetitions 3]",
+    "  node research/cli.js policy-judge --corpus corpus.jsonl --candidate evolution.json --policy-id id [--judge-effort high]",
+    "  node research/cli.js policy-finalize --corpus corpus.jsonl --state judged.json --policy-id id [--repetitions 3]",
+    "  node research/cli.js policy-promote --state block-policy-evolution.json [--rules rules/default-rules.json]",
     "  node research/cli.js replay --corpus corpus.jsonl --candidate candidate.json",
     "  node research/cli.js judge --corpus corpus.jsonl --candidate candidate.json [--judge-effort high]",
     "  node research/cli.js promote --state evolution.json [--rules rules/default-rules.json]",
