@@ -64,15 +64,26 @@ compression-arm trial contains actual CCA hook observations.
 
 ## Bounded feasibility result
 
-On 2026-07-29, the current arm completed one real
-`build-cython-ext--current--r1` trial with Codex CLI 0.146.0:
+On 2026-07-29, one matched `build-cython-ext` triplet completed with Codex CLI
+0.146.0:
 
-- Harbor reward: `1.0`;
-- Harbor exceptions: `0`;
-- CCA PostToolUse observations: `58`;
-- a real package-install observation changed from an estimated 969 tokens to
-  640 tokens and recorded the splitter, scorer, planner, and static-rule path.
+| Arm | Reward | Exceptions | Input tokens | Hook observations | Hook-local output |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| no compression | 1.0 | 0 | 3,556,308 | 0 | n/a |
+| Git `7830b17` | 1.0 | 0 | 2,262,527 | 46 | 37,018 → 31,678 |
+| current pipeline | 1.0 | 0 | 5,601,872 | 58 | 55,637 → 55,014 |
 
-This verifies installation and effect in a real Docker task, but it is only
-one of the required 48 trials. The release gate correctly remains failed until
-the complete three-arm experiment exists.
+The current hook fired in the real model → Bash → PostToolUse path. A package
+install observation changed from an estimated 969 tokens to 640 tokens and
+recorded the splitter, scorer, planner, and static-rule path. No hook error was
+recorded in either compression arm.
+
+All three agents solved the task, but their command trajectories differed
+substantially. The current arm used more total input tokens in this single
+triplet and its hook-local reduction was more conservative than the legacy
+arm. One sample cannot separate compression effects from trajectory variance,
+so it is evidence of hook feasibility rather than a compression win.
+
+Only 3 of the required 48 trials exist. The report therefore fails the token
+checks and the complete-trial check, and version 0.2.0 must not be released
+from this result.
