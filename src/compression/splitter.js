@@ -4,6 +4,8 @@ const DEFAULT_SPLITTER = {
   logLevelPattern: "(?:^|\\s|\\[)(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)(?:\\s|:|\\])",
   tracebackStartPattern: "^Traceback \\(most recent call last\\):",
   tracebackEndPattern: "^\\S*(?:Error|Exception|Failure|Interrupt)(?::|\\b)",
+  criticalLinePattern: "(?:\\b(?:ERROR|FATAL|FAILED)\\b|\\b(?:error|fatal|failed)\\s*:|\\b\\d+\\s+failed\\b|\\bFailed to\\b|\\b[A-Za-z_][A-Za-z0-9_]*(?:Error|Failure)\\b|\\btimed?\\s+out\\b|\\bTimeout(?:Error|Exception)\\b|\\b(?:command|connection|operation|request|test)\\b[^\\n]{0,80}\\btimeout\\b|\\bsegmentation fault\\b|\\bpanic\\b|\\bOOM\\b|\\bundefined reference\\b|\\bNo such file or directory\\b|\\bPermission denied\\b|\\bnpm ERR!|\\bCommand failed\\b)",
+  opaqueLinePattern: "(?:^-----BEGIN [A-Z0-9 ][A-Z0-9 -]*-----$|^data:[^,\\s]{1,200};base64,[A-Za-z0-9+/=]{128,}$|^(?:[A-Za-z0-9+/]{4}){16,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$|^\\s*(?:[0-9a-f]{4,16}:?\\s+)(?:[0-9a-f]{2}(?:\\s+|$)){8,})",
 };
 
 function splitBlocks(input, config = {}) {
@@ -42,6 +44,8 @@ function splitBlocks(input, config = {}) {
       blank: false,
       level: logLevel(line, settings.logLevel),
       timestamp: timestampKey(line),
+      critical: isCriticalBoundaryLine(line, settings.criticalLine),
+      opaque: settings.opaqueLine.test(line),
       traceback: lineInTraceback,
       tracebackStart: startsTraceback,
       tracebackEnd: endsTraceback,
@@ -71,6 +75,8 @@ function isBoundary({ current, nextSignature, previous, previousPreviousSignatur
   if (!previous) return false;
   if (current.tracebackStart || previous.tracebackEnd) return true;
   if (!current.traceback && !previous.traceback) {
+    if (current.critical !== previous.critical) return true;
+    if (current.opaque !== previous.opaque) return true;
     if (current.timestamp && previous.timestamp && current.timestamp !== previous.timestamp) return true;
     if (current.level && previous.level && current.level !== previous.level) return true;
     const startsRepeatedRun =
@@ -95,9 +101,13 @@ function makeBlock(entries) {
       ? "separator"
       : entries.some((entry) => entry.meta.traceback)
         ? "traceback"
-        : entries.some((entry) => entry.meta.level)
-          ? "log"
-          : "text",
+        : entries.some((entry) => entry.meta.opaque)
+          ? "opaque"
+          : entries.some((entry) => entry.meta.critical)
+            ? "critical"
+            : entries.some((entry) => entry.meta.level)
+              ? "log"
+              : "text",
   };
 }
 
@@ -112,6 +122,16 @@ function normalizeSettings(config) {
     tracebackEnd: safeRegex(
       config.traceback_end_pattern || config.tracebackEndPattern,
       DEFAULT_SPLITTER.tracebackEndPattern,
+      "i"
+    ),
+    criticalLine: safeRegex(
+      config.critical_line_pattern || config.criticalLinePattern,
+      DEFAULT_SPLITTER.criticalLinePattern,
+      ""
+    ),
+    opaqueLine: safeRegex(
+      config.opaque_line_pattern || config.opaqueLinePattern,
+      DEFAULT_SPLITTER.opaqueLinePattern,
       "i"
     ),
   };
@@ -129,6 +149,14 @@ function logLevel(line, pattern) {
   pattern.lastIndex = 0;
   const match = pattern.exec(line);
   return match ? String(match[1] || match[0]).toUpperCase() : null;
+}
+
+function isCriticalBoundaryLine(line, pattern) {
+  if (/^\s*(?:(?:except|raise|def|class|if|elif|while|for|return)\b|#|\/\/)/.test(line)) {
+    return false;
+  }
+  pattern.lastIndex = 0;
+  return pattern.test(line);
 }
 
 function timestampKey(line) {

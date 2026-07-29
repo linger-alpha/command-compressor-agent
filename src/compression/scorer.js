@@ -26,13 +26,19 @@ const DEFAULT_SIGNALS = [
   },
   {
     id: "traceback_exception",
-    pattern: "\\b(?:Exception|Traceback)\\b",
+    pattern: "(?:\\bTraceback\\b|\\b(?:Exception|[A-Za-z_][A-Za-z0-9_]*Exception)\\b)",
     flags: "i",
     tier: "preserve",
   },
   {
     id: "error_failure",
-    pattern: "(?:\\b(?:ERROR|fatal|FAILED)\\b|\\b[A-Za-z_][A-Za-z0-9_]*(?:Error|Failure)\\b)",
+    pattern: "(?:\\b(?:ERROR|FATAL|FAILED)\\b|\\b(?:error|fatal|failed)\\s*:|\\b\\d+\\s+failed\\b|\\bFailed to\\b|\\b[A-Za-z_][A-Za-z0-9_]*(?:Error|Failure)\\b)",
+    flags: "",
+    tier: "preserve",
+  },
+  {
+    id: "critical_runtime_failure",
+    pattern: "(?:\\btimed?\\s+out\\b|\\bTimeout(?:Error|Exception)\\b|\\b(?:command|connection|operation|request|test)\\b[^\\n]{0,80}\\btimeout\\b|\\bsegmentation fault\\b|\\bpanic\\b|\\bOOM\\b|\\bundefined reference\\b|\\bNo such file or directory\\b|\\bPermission denied\\b|\\bnpm ERR!|\\bCommand failed\\b)",
     flags: "i",
     tier: "preserve",
   },
@@ -101,7 +107,7 @@ function normalizeSignals(value) {
       id: String(signal.id || `signal_${index + 1}`),
       tier: signalTier(signal),
       pattern: signal.pattern == null ? "" : String(signal.pattern),
-      flags: String(signal.flags || "i").replace(/g/g, ""),
+      flags: String(signal.flags == null ? "i" : signal.flags).replace(/g/g, ""),
       kind: signal.kind ? String(signal.kind) : "",
     }));
 }
@@ -176,7 +182,7 @@ function isOpaqueEncodedBlock(lines, config = {}) {
     if (/^(?:[A-Za-z0-9+/]{4}){16,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(trimmed)) {
       encodedLines += 1;
       encodedChars += trimmed.length;
-      if (trimmed.length >= minimumEncodedChars * 2) return true;
+      if (trimmed.length >= minimumEncodedChars) return true;
     }
     if (/^\s*(?:[0-9a-f]{4,16}:?\s+)(?:[0-9a-f]{2}(?:\s+|$)){8,}/i.test(line)) {
       hexLines += 1;

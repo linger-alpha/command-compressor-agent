@@ -34,6 +34,17 @@ function block(lines, startLine = 1) {
     "cd /tmp && rg -n 'needle' . | head -n 20",
     "if test -f package.json; then sed -n '1,40p' package.json; else printf 'missing\\n'; fi",
     "for file in a b; do printf '%s\\n' \"$file\"; sed -n '1,5p' \"$file\"; done",
+    "/bin/bash -lc 'sed -n \"1,120p\" src/main.js'",
+    "zsh -lc 'git status; git diff | head -n 20'",
+    "cd /tmp && git -C repo grep -n 'needle' -- src/main.js",
+    "cd /tmp && awk 'NR>=420 && NR<=434 {print NR\":\"$0}' notes.md",
+    "conda run -n tools python -m pip show torch",
+    "python -m server --help",
+    "/bin/bash -lc 'awk '\\''NR>=980 && NR<=1140 {print NR \":\" $0}'\\'' src/main.py | sed -n \"1,220p\"'",
+    "docker ps",
+    "ps aux | grep docker",
+    "kubectl get pods -A",
+    "systemctl status docker",
   ];
   const mutations = [
     "cat package.json; rm package.json",
@@ -44,6 +55,9 @@ function block(lines, startLine = 1) {
     "printf 'generated output\\n'",
     "echo generated output",
     "python inspect.py",
+    "/bin/bash -lc 'cat package.json; rm package.json'",
+    "bash -lc \"printf '%s' \\\"$(python mutate.py)\\\"\"",
+    "awk 'BEGIN {print \"<literal>\"}' input.txt > output.txt",
   ];
   for (const command of safeReads) {
     assert.strictEqual(isReadOnlyCommand(command), true, `expected read-only: ${command}`);
@@ -89,6 +103,27 @@ function block(lines, startLine = 1) {
   ];
   const blocks = splitBlocks(source);
   assert.strictEqual(blocks.length, 1, "source indentation changes must not create micro-blocks");
+}
+
+{
+  const mixed = splitBlocks([
+    "Downloading package 1 10%",
+    "Downloading package 2 20%",
+    "ERROR: dependency conflict",
+    "Downloading package 3 30%",
+    "failed=0 error_rate=0",
+  ]);
+  assert.deepStrictEqual(
+    mixed.filter((entry) => !entry.separator).map((entry) => entry.lines),
+    [
+      ["Downloading package 1 10%", "Downloading package 2 20%"],
+      ["ERROR: dependency conflict"],
+      ["Downloading package 3 30%", "failed=0 error_rate=0"],
+    ],
+    "a real failure must be isolated without treating metric names as failures"
+  );
+  assert.strictEqual(scoreBlock(block(["failed=0 error_rate=0"])).tier, "light");
+  assert.strictEqual(scoreBlock(block(["FAILED integration test"])).tier, "preserve");
 }
 
 {

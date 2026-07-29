@@ -180,8 +180,6 @@ function strength(args) {
   }
   const profiles = listStrengthProfiles().map((profile) => ({
     name: profile.name,
-    minRawTokens: profile.minRawTokens,
-    strongOnly: profile.strongOnly,
     description: profile.description,
   }));
   printJsonOrText(flags, { strength: config.strength, profiles }, [

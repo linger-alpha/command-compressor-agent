@@ -23,14 +23,13 @@ TerminalBench-style paired A/B evaluation used here. CCA does not reuse TACO's
 full evolutionary runtime; it distills the idea into editable local rules and a
 Claude Code hook that favors stability.
 
-The default release therefore prioritizes safety over maximum compression:
+The current runtime therefore prioritizes recoverability and block-level safety:
 
 - use `PostToolUse` instead of command rewriting,
 - compress only when the result is shorter,
 - keep a `raw_ref` fallback,
-- avoid compressing visual, pixel, board, OCR, contour, and silhouette
-  diagnostics,
-- exempt small outputs by default,
+- preserve encoded, visual, dense-semantic, traceback, and failure blocks,
+- exempt RTK and inspection/read commands,
 - expose local savings through `cca gain`.
 
 We welcome issue reports, benchmark reproductions, and rule-design discussion,
@@ -107,30 +106,25 @@ preserving `details` and `isError`. Every adapter normalizes to the same
 `{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
 an exception.
 
-The compression layer stores the raw output, applies the Critical Gate, splits
-continuous text into rule-based blocks, scores block importance, plans the
-available token budget, and then applies static compression rules. High
-importance blocks are retained losslessly; medium and low blocks receive
-progressively stronger duplicate, progress, and head/tail treatment. The
-output header contains a `raw_ref` path, so the agent can recover the original
-output when a required fact is missing. Commands that read the configured
-raw-output directory are passed through and are not compressed again.
+The compression layer first exempts RTK, inspection/read commands, and raw
+fallback reads. It removes ANSI control sequences, splits the remaining output
+into coarse rule-based blocks, classifies each block as `preserve`, `light`, or
+`aggressive`, and then applies the existing static rules at that tier. Encoded,
+binary-looking, dense-semantic, visual, traceback, and real failure blocks are
+retained losslessly. Progress and duplicate blocks can be compressed strongly.
+There is no whole-output token threshold or global token budget. The output
+header only says that compression occurred and gives a `raw_ref` path; scores,
+tiers, and rule diagnostics are not shown to the coding agent.
 
 The evaluation layer appends local JSONL events and powers `cca gain`, which reports estimated raw tokens, effective tokens, compressed observations, and estimated saved tokens.
 
-## Compression Strength
+## Legacy Strength Setting
 
-| Strength | Behavior | Approx. Bash observation token reduction |
-| --- | --- | ---: |
-| `default` | Default. Exempt outputs below 2k estimated tokens. Use strong and weak rules above the threshold. | 8.3% |
-| `high` | Exempt outputs below 1k estimated tokens. More aggressive than default. | 10.1% |
-| `xhigh` | No length exemption. Experimental; useful for benchmarks, risky for score-sensitive work. | 15.5% |
-| `low` | Only compress outputs above 2k estimated tokens and only with strong rules. | 5.5% |
-
-The reduction estimates above are observation-level replay estimates from 20 randomly sampled TerminalBench 2.0 tasks. Actual compression rate depends on the task. For example, deep-learning runs and other workloads with long noisy output
-can see much higher compression.
-
-Compression is intentionally conservative. In our experiments, low-token outputs often saved little and sometimes encouraged extra reading or trajectory divergence. The 2k exemption is a simple guardrail.
+`low`, `default`, `high`, and `xhigh` remain accepted so existing configuration
+files and scripts do not break. They are compatibility labels in the new
+pipeline and no longer select token thresholds, budgets, or different rule
+sets. Compression strength is chosen independently for each block by the static
+block policy.
 
 ## Rules
 
@@ -140,24 +134,20 @@ Rules are stored in a user-editable JSON file copied during `cca init`.
 cca rules
 ```
 
-The v2 default rule file contains:
+The v3 default rule file contains:
 
-- `whitelist`: commands that should not be compressed. This includes RTK, `cat`,
-  `ls`, `rg`, `grep`, `find`, `head`, `tail`, and similar inspection commands.
-- `visual_diagnostic_passthrough`: image, chess-board, pixel, OCR, contour,
-  silhouette, and visual-classification diagnostics. These are passed through
-  because their layout and repetition often carry the important evidence. This
-  passthrough applies even when the command failed, because failed visual
-  diagnostics can contain the evidence needed to recover.
+- `command_policy`: RTK compatibility plus inspection/read commands such as
+  `cat`, `ls`, `rg`, `grep`, `find`, `head`, and `tail`.
+- `splitter` and `block_policy`: coarse linear-time boundaries and auditable
+  `preserve`/`light`/`aggressive` signals. Visual and encoded data are protected
+  at block level rather than bypassing the entire observation.
 - `strong_rules`: progress bars, ANSI/status noise, package install chatter,
-  Docker layer progress, and high-repetition logs. These rules avoid semantic
-  head/tail cutting.
+  Docker layer progress, and high-repetition logs.
 - `weak_rules`: longer TACO-inspired learned rules distilled from offline traces.
-  They keep head/tail plus important lines and are disabled by `low` strength.
-  The release runtime does not do online learning by default.
-- `splitter`, `importance`, and `planner`: auditable block boundaries, bounded
-  `[-100, 100]` importance weights, and soft budget settings. Existing v1 user
-  rule files inherit these built-in defaults and are not overwritten.
+  They keep head/tail plus important lines. The release runtime does not do
+  online learning.
+- `planner`: separate light and aggressive static retention strategies. Existing
+  v1/v2 user rule files inherit built-in block defaults and are not overwritten.
 
 Raw fallback reads are also whitelisted. Commands that read the configured raw
 directory, normally `.command-compressor-agent/raw`, are not compressed again.
@@ -177,15 +167,13 @@ silhouettes, contours, and candidate FEN strings, and then reason over that text
 That makes the textual diagnostic output safety-critical: repeated dots, blocks,
 and matrix-like rows can be evidence rather than noise.
 
-The current release responds with concrete mitigations:
+The current pipeline responds with concrete mitigations:
 
-- visual, board, pixel, contour, OCR, and silhouette diagnostics now pass
-  through, including failed diagnostics,
-- dense matrix-like outputs pass through,
+- visual, board, pixel, contour, OCR, silhouette, encoded, and dense matrix-like
+  blocks are retained losslessly,
 - raw fallback reads pass through and are not compressed again,
-- `default` exempts outputs below 2k estimated tokens,
-- `low` disables weak head/tail rules,
-- package smoke tests verify progress compression, visual passthrough, and
+- real failure and traceback blocks are retained losslessly,
+- package smoke tests verify progress compression, protected blocks, and
   raw fallback passthrough.
 
 See [docs/technical-report.md](docs/technical-report.md) for the experiment
@@ -195,9 +183,9 @@ summary and case analysis. A Chinese counterpart is available at
 ## Current Conclusion
 
 `cca` is a promising but still experimental compression layer. The safest
-current use is conservative command-observation compression for noisy outputs,
-with local rules kept visible and editable. We do not recommend using `xhigh`
-as the default for score-sensitive work.
+current use is command-observation compression for noisy outputs, with local
+rules kept visible and editable. The old strength labels no longer change
+runtime behavior.
 
 The project needs more repeated end-to-end A/B tests across TerminalBench,
 DeepSWE-style tasks, and other coding agents. If you find a task where

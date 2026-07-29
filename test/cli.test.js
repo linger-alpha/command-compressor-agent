@@ -27,7 +27,10 @@ async function capture(fn) {
   const config = path.join(dir, "config.json");
   const first = await capture(() => main(["strength", "high", "--config", config, "--json"]));
   assert.strictEqual(first.code, 0);
-  assert.strictEqual(JSON.parse(first.out).strength, "high");
+  const strengthOutput = JSON.parse(first.out);
+  assert.strictEqual(strengthOutput.strength, "high");
+  assert(strengthOutput.profiles.every((profile) => profile.minRawTokens === undefined));
+  assert(strengthOutput.profiles.every((profile) => profile.strongOnly === undefined));
 
   const second = await capture(() => main(["status", "--config", config, "--json"]));
   assert.strictEqual(second.code, 0);
