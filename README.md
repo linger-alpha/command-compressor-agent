@@ -4,8 +4,8 @@ Command Compressor for Agent (`cca`) is an experimental command-output
 compression layer for coding agents. The project is inspired by RTK and
 [TACO](https://arxiv.org/abs/2604.19572): it treats command-output compression
 as an agent-context optimization problem, then implements a conservative
-offline-rule runtime for stability. The current version only supports Claude
-Code.
+offline-rule runtime for stability. The current version supports Claude Code,
+Codex CLI, stable OpenCode, and Pi.
 
 Note: this project is compatible with RTK. RTK focuses on optimizing frequent
 commands; CCA focuses on compressing commands with long outputs.
@@ -45,16 +45,31 @@ Install from npm:
 npm install -g @linger-alpha/cca
 ```
 
-Install the Claude Code hook globally:
+Auto-detect all installed supported agents and install their integrations
+globally:
 
 ```bash
 cca init --global
 ```
 
+Or install one integration explicitly:
+
+```bash
+cca install --claude-code --global
+cca install --codex --global
+cca install --opencode --global
+cca install --pi --global
+```
+
+Use `--project` instead of `--global` for a repository-local installation.
+Codex hooks require an explicit review in `/hooks`; CCA never bypasses that
+trust step during a normal install. OpenCode v2 beta is not supported by this
+release.
+
 Check the current configuration:
 
 ```bash
-cca status
+cca status --json
 ```
 
 Show estimated token savings:
@@ -72,20 +87,34 @@ cca strength xhigh
 cca strength low
 ```
 
-Uninstall the hook:
+Uninstall selected integrations, or omit the agent flags to remove every
+CCA-managed integration in that scope:
 
 ```bash
+cca uninstall --codex --global
 cca uninstall --global
 ```
 
 ## How It Works
 
-`cca` has three release-runtime layers.
+`cca` has three release-runtime layers and performs no network or model calls.
 
-The takeover layer registers a Claude Code `PostToolUse:Bash` hook. Claude Code runs the original Bash command first. The hook then receives the completed tool response and may return `updatedToolOutput` with a compressed observation. If the hook crashes or cannot produce a shorter safe result, it fails open. The installed hook command uses the absolute Node executable from the `cca init` process, so it does not depend on Claude Code's hook shell having npm's `node` on `PATH`.
+The takeover layer integrates with each agent's post-tool lifecycle. Claude
+Code receives `updatedToolOutput`; Codex receives `continue: false` with
+compressed `stopReason` feedback; stable OpenCode mutates the
+`tool.execute.after` output; and Pi replaces `tool_result.content` while
+preserving `details` and `isError`. Every adapter normalizes to the same
+`{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
+an exception.
 
-The compression layer stores the raw output, applies local static rules, and returns a compact observation only when it is net-positive. The output header contains a `raw_ref` path, so the agent can recover the original output when a required fact is missing. Commands that read the configured raw-output directory
-are passed through and are not compressed again.
+The compression layer stores the raw output, applies the Critical Gate, splits
+continuous text into rule-based blocks, scores block importance, plans the
+available token budget, and then applies static compression rules. High
+importance blocks are retained losslessly; medium and low blocks receive
+progressively stronger duplicate, progress, and head/tail treatment. The
+output header contains a `raw_ref` path, so the agent can recover the original
+output when a required fact is missing. Commands that read the configured
+raw-output directory are passed through and are not compressed again.
 
 The evaluation layer appends local JSONL events and powers `cca gain`, which reports estimated raw tokens, effective tokens, compressed observations, and estimated saved tokens.
 
@@ -111,7 +140,7 @@ Rules are stored in a user-editable JSON file copied during `cca init`.
 cca rules
 ```
 
-The default rule file has four sections:
+The v2 default rule file contains:
 
 - `whitelist`: commands that should not be compressed. This includes RTK, `cat`,
   `ls`, `rg`, `grep`, `find`, `head`, `tail`, and similar inspection commands.
@@ -126,6 +155,9 @@ The default rule file has four sections:
 - `weak_rules`: longer TACO-inspired learned rules distilled from offline traces.
   They keep head/tail plus important lines and are disabled by `low` strength.
   The release runtime does not do online learning by default.
+- `splitter`, `importance`, and `planner`: auditable block boundaries, bounded
+  `[-100, 100]` importance weights, and soft budget settings. Existing v1 user
+  rule files inherit these built-in defaults and are not overwritten.
 
 Raw fallback reads are also whitelisted. Commands that read the configured raw
 directory, normally `.command-compressor-agent/raw`, are not compressed again.
@@ -171,6 +203,15 @@ The project needs more repeated end-to-end A/B tests across TerminalBench,
 DeepSWE-style tasks, and other coding agents. If you find a task where
 compression improves, hurts, or changes the agent trajectory, please share the
 trace and rule context so the community can improve the safety boundary.
+
+## Research and npm package boundary
+
+The open-source repository contains the offline TACO-style importer, local
+redaction and auditing, Luna candidate generation, Sol independent judging,
+rule replay, and Harbor/Terminal-Bench tooling under `research/`. None of that
+is published to npm or imported by production code. The npm tarball contains
+only `bin/`, `src/`, `rules/`, and npm's automatic package metadata, README,
+and license. `npm run check:package` enforces this boundary.
 
 ## Community
 

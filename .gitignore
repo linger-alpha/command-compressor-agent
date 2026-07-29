@@ -8,3 +8,5 @@ coverage/
 research/artifacts/
 research/data/
 research/jobs/
+__pycache__/
+*.pyc

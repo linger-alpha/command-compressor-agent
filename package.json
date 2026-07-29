@@ -10,17 +10,18 @@
   "files": [
     "bin",
     "src",
-    "rules",
-    "docs",
-    "README.md",
-    "LICENSE"
+    "rules"
   ],
   "scripts": {
-    "test": "node test/compressor.test.js && node test/pipeline.test.js && node test/adapters.test.js && node test/install.test.js && node test/cli.test.js && node research/test/research.test.js",
+    "test": "node test/compressor.test.js && node test/pipeline.test.js && node test/adapters.test.js && node test/install.test.js && node test/cli.test.js && node research/test/research.test.js && node research/benchmark/test/benchmark.test.js && node scripts/check-package.js",
+    "check:package": "node scripts/check-package.js",
     "smoke": "node bin/cca.js status --json"
   },
   "keywords": [
     "claude-code",
+    "codex-cli",
+    "opencode",
+    "pi-coding-agent",
     "coding-agent",
     "compression",
     "posttooluse",
