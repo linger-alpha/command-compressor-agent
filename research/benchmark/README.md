@@ -48,9 +48,10 @@ Use `--trial build-cython-ext--current--r1` to select the current-hook arm
 explicitly.
 The runner persists state after every sequential trial. Results and temporary
 configs live under `research/jobs/`, which is excluded from Git and npm.
-If the current runtime commit differs from the plan, or `bin/`, `src/`,
-`rules/`, or `package.json` has uncommitted changes, the current arm refuses
-to run. Reports also reject older current-arm artifacts whose commit metadata
+The current arm refuses to run if `bin/`, `src/`, `rules/`, or `package.json`
+differs from the commit pinned by the plan. Research-only commits are allowed
+when those production paths are still byte-for-byte equivalent to the pinned
+commit. Reports reject current-arm artifacts whose pinned runtime metadata
 does not match the plan.
 
 ## Report and release gate
@@ -69,36 +70,64 @@ compression-arm trial contains actual CCA hook observations.
 
 ## Bounded feasibility result
 
-On 2026-07-29, three `build-cython-ext` repeats produced nine result artifacts
-with Codex CLI 0.146.0. Every verifier returned reward 1, but one result in each
-arm also carried an agent exception. A reward-positive result with
-`exception_info` is reported as passed but is excluded from matched token
-metrics. Only repeat 1 is therefore a clean matched triplet:
+On 2026-07-29, three clean `build-cython-ext` repeats were completed with Codex
+CLI 0.146.0. Earlier timeout, non-zero-exit, stale-runtime, Docker credential,
+and missing-Compose attempts remain diagnostic artifacts but are not included.
+Every result below has verifier reward 1 and no `exception_info`:
 
-| Arm | Reward | Exceptions | Input tokens | Hook observations | Hook-local output |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| no compression | 1.0 | 0 | 3,556,308 | 0 | n/a |
-| Git `7830b17` | 1.0 | 0 | 2,262,527 | 46 | 37,018 → 31,678 |
-| current pipeline | 1.0 | 0 | 5,601,872 | 58 | 55,637 → 55,014 |
+| Repeat | No compression | Git `7830b17` | Current pipeline |
+| --- | ---: | ---: | ---: |
+| r1 input tokens | 3,556,308 | 2,262,527 | 3,135,255 |
+| r2 input tokens | 2,377,144 | 3,053,293 | 2,048,410 |
+| r3 input tokens | 3,397,416 | 2,256,770 | 3,123,450 |
+| median | 3,397,416 | 2,262,527 | 3,123,450 |
 
-The current hook fired in the real model → Bash → PostToolUse path. A package
-install observation changed from an estimated 969 tokens to 640 tokens and
-recorded the splitter, scorer, planner, and static-rule path. No hook error was
-recorded in either compression arm.
+The current arm used fewer input tokens than no compression in every repeat:
+11.84%, 13.83%, and 8.06% respectively. The fixed release calculation compares
+arm medians, producing an 8.06% reduction, below the required 10%. Results
+against the legacy arm were unstable: current was 38.57% worse in r1, 32.91%
+better in r2, and 38.40% worse in r3. The median comparison is therefore
+38.05% worse than legacy and fails the 5% improvement gate.
 
-All three agents solved the task, but their command trajectories differed
-substantially. The current arm used more total input tokens in this single
-triplet and its hook-local reduction was more conservative than the legacy
-arm. One sample cannot separate compression effects from trajectory variance,
-so it is evidence of hook feasibility rather than a compression win.
+The local hook measurements tell a different and narrower story:
 
-Across all three reward-positive results per arm, the input-token medians were
-3,556,308 for no compression, 2,459,443 for legacy, and 3,638,176 for the
-current pipeline. Those all-result medians are diagnostic only: repeat 2 had
-timeouts in the no-compression and current arms, while repeat 3 had a non-zero
-agent exit in the legacy arm. The report records two reward triplets as
-excluded by exceptions.
+| Measurement over three repeats | Git `7830b17` | Current pipeline |
+| --- | ---: | ---: |
+| Hook observations | 129 | 156 |
+| Changed observations | 19 | 80 |
+| Raw output estimate | 147,060 | 136,425 |
+| Output after hook | 137,874 | 127,720 |
+| Command-policy passthrough output | 102,350 | 104,983 |
+| Processable output | 44,710 | 31,442 |
+| Total hook-local reduction | 6.25% | 6.38% |
+| Reduction of processable output | 20.55% | 27.69% |
+| Raw fallback reads | 0 | 0 |
 
-Only 9 of the required 48 results exist, and only one triplet is cleanly
-matched. The report therefore fails the token checks and the complete-trial
-check, and version 0.2.0 must not be released from this result.
+Thus the current block pipeline was not more conservative on output that
+reached it: it changed more observations and reduced the processable portion
+more than the old core. It also delivered about 10,000 fewer estimated tool
+output tokens in aggregate. The end-to-end input-token regression versus
+legacy came from different Agent trajectories, not from a larger post-hook
+output stream. Current made 27 more tool calls, mostly additional source
+inspection, and used 135 distinct commands versus legacy's 110. Exact repeated
+calls were similar (21 versus 19), so this was not a simple retry loop.
+
+This does not prove that compression caused the longer trajectories, nor that
+they were random. Model execution was nondeterministic and the three arms did
+not share a controllable model seed. Because input usage re-counts accumulated
+context across turns, call count and when large reads occur can dominate the
+few thousand tokens directly saved by a hook. The planned four tasks and 48
+trials remain necessary before drawing a general performance conclusion.
+
+The current model-facing prefix is a single line containing only
+`compressed output` and the fallback path; no score, tier, or strategy is
+shown. Across the 80 changed outputs, that required prefix accounted for an
+estimated 1,920 direct tokens before context replay. No fallback was read.
+These three task trajectories contained no Base64, PEM, hex-dump, or other
+encoded block, so real-task encoded preservation remains untested here even
+though deterministic unit tests cover it.
+
+The real model → Bash → PostToolUse replacement path worked in all three
+current repeats, and all observed task-success checks pass. Only 9 of the
+required 48 clean results exist, however, and both token gates fail. Version
+0.2.0 must not be released from this result.

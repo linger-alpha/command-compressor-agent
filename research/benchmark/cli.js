@@ -259,6 +259,13 @@ function summarizeTrials(manifest, results) {
     input_tokens: [],
     hook_observations: 0,
     hook_trials: 0,
+    hook_changed_observations: 0,
+    hook_raw_tokens_est: 0,
+    hook_compressed_tokens_est: 0,
+    hook_saved_tokens_est: 0,
+    hook_command_passthrough_observations: 0,
+    hook_command_passthrough_raw_tokens_est: 0,
+    hook_fallback_observations: 0,
   }]));
   for (const trial of manifest.trials) {
     const result = results.get(trial.id);
@@ -273,9 +280,30 @@ function summarizeTrials(manifest, results) {
     const observations = Number(result.cca_hook_observations || 0);
     stats.hook_observations += observations;
     if (observations > 0) stats.hook_trials += 1;
+    for (const field of [
+      "changed_observations",
+      "raw_tokens_est",
+      "compressed_tokens_est",
+      "saved_tokens_est",
+      "command_passthrough_observations",
+      "command_passthrough_raw_tokens_est",
+      "fallback_observations",
+    ]) {
+      stats[`hook_${field}`] += Number(result[`cca_hook_${field}`] || 0);
+    }
   }
   for (const stats of Object.values(byArm)) {
     stats.input_token_median = median(stats.input_tokens);
+    stats.hook_local_reduction = reduction(
+      stats.hook_raw_tokens_est,
+      stats.hook_compressed_tokens_est
+    );
+    stats.hook_processable_raw_tokens_est =
+      stats.hook_raw_tokens_est - stats.hook_command_passthrough_raw_tokens_est;
+    stats.hook_processable_reduction = reduction(
+      stats.hook_processable_raw_tokens_est,
+      stats.hook_processable_raw_tokens_est - stats.hook_saved_tokens_est
+    );
     delete stats.input_tokens;
   }
 
@@ -321,7 +349,7 @@ function summarizeTrials(manifest, results) {
     compression_hooks_observed: hooksEffective,
   };
   return {
-    schema_version: 1,
+    schema_version: 2,
     dataset: manifest.dataset,
     model: manifest.model,
     reasoning_effort: manifest.reasoning_effort,
@@ -350,13 +378,56 @@ function withArtifactFacts(result, jobDir) {
   const trialDir = firstTrialDirectory(jobDir);
   const gainPath = trialDir && path.join(trialDir, "artifacts", "cca-gain.jsonl");
   const armPath = trialDir && path.join(trialDir, "artifacts", "cca-arm.json");
-  copy.cca_hook_observations = gainPath && fs.existsSync(gainPath)
-    ? fs.readFileSync(gainPath, "utf8").split(/\r?\n/).filter(Boolean).length
-    : 0;
+  Object.assign(copy, readGainFacts(gainPath));
   copy.cca_arm_metadata = armPath && fs.existsSync(armPath)
     ? readJson(armPath)
     : null;
   return copy;
+}
+
+function readGainFacts(gainPath) {
+  const facts = {
+    cca_hook_observations: 0,
+    cca_hook_changed_observations: 0,
+    cca_hook_raw_tokens_est: 0,
+    cca_hook_compressed_tokens_est: 0,
+    cca_hook_saved_tokens_est: 0,
+    cca_hook_command_passthrough_observations: 0,
+    cca_hook_command_passthrough_raw_tokens_est: 0,
+    cca_hook_fallback_observations: 0,
+  };
+  if (!gainPath || !fs.existsSync(gainPath)) return facts;
+  for (const line of fs.readFileSync(gainPath, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const rules = Array.isArray(row.rules) ? row.rules : [];
+    const raw = numberOr(row.raw_tokens_est, 0);
+    facts.cca_hook_observations += 1;
+    facts.cca_hook_changed_observations += row.changed ? 1 : 0;
+    facts.cca_hook_raw_tokens_est += raw;
+    facts.cca_hook_compressed_tokens_est += numberOr(row.compressed_tokens_est, raw);
+    facts.cca_hook_saved_tokens_est += numberOr(row.saved_tokens_est, 0);
+    const commandPassthrough = rules.some((rule) => [
+      "whitelist_passthrough",
+      "read_only_passthrough",
+      "raw_fallback_read_passthrough",
+      "rtk_passthrough",
+      "command_compatibility_passthrough",
+    ].includes(rule));
+    if (commandPassthrough) {
+      facts.cca_hook_command_passthrough_observations += 1;
+      facts.cca_hook_command_passthrough_raw_tokens_est += raw;
+    }
+    if (rules.includes("raw_fallback_read_passthrough")) {
+      facts.cca_hook_fallback_observations += 1;
+    }
+  }
+  return facts;
 }
 
 function jobMatchesManifest(jobDir, trial, manifest) {
@@ -606,6 +677,7 @@ module.exports = {
   makeJobConfig,
   median,
   reportFromJobs,
+  readGainFacts,
   resultMatchesManifest,
   retryJobName,
   summarizeTrials,

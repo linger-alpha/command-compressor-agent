@@ -117,17 +117,27 @@ class CcaCodex(Codex):
         if self._cca_arm == "current":
             if not self._cca_current_commit:
                 raise ValueError("current_commit is required for the current benchmark arm")
-            actual_commit = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+            runtime_diff = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--quiet",
+                    self._cca_current_commit,
+                    "--",
+                    "bin",
+                    "src",
+                    "rules",
+                    "package.json",
+                ],
                 cwd=self._cca_repo_root,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-            if actual_commit != self._cca_current_commit:
+                check=False,
+            )
+            if runtime_diff.returncode not in (0, 1):
+                raise ValueError("Could not compare the current benchmark runtime")
+            if runtime_diff.returncode == 1:
                 raise ValueError(
-                    "Current benchmark source commit changed: "
-                    f"{actual_commit} != {self._cca_current_commit}"
+                    "Current benchmark runtime differs from pinned commit "
+                    f"{self._cca_current_commit}"
                 )
             runtime_changes = subprocess.run(
                 [
@@ -148,7 +158,7 @@ class CcaCodex(Codex):
             ).stdout.strip()
             if runtime_changes:
                 raise ValueError(
-                    "Current benchmark runtime has uncommitted changes:\n"
+                    "Current benchmark runtime has untracked or uncommitted changes:\n"
                     f"{runtime_changes}"
                 )
             bundle.mkdir(parents=True)

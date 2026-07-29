@@ -12,6 +12,7 @@ const {
   jobName,
   latestJobDirectory,
   makeJobConfig,
+  readGainFacts,
   resultMatchesManifest,
   retryJobName,
   summarizeTrials,
@@ -24,6 +25,13 @@ function successfulResult(inputTokens, hookObservations) {
     agent_result: { n_input_tokens: inputTokens },
     verifier_result: { rewards: { reward: 1 } },
     cca_hook_observations: hookObservations,
+    cca_hook_changed_observations: hookObservations,
+    cca_hook_raw_tokens_est: hookObservations * 100,
+    cca_hook_compressed_tokens_est: hookObservations * 75,
+    cca_hook_saved_tokens_est: hookObservations * 25,
+    cca_hook_command_passthrough_observations: 0,
+    cca_hook_command_passthrough_raw_tokens_est: 0,
+    cca_hook_fallback_observations: 0,
   };
 }
 
@@ -82,6 +90,43 @@ function successfulResult(inputTokens, hookObservations) {
 
   const retryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cca-benchmark-test-"));
   try {
+    const gainPath = path.join(retryRoot, "gain.jsonl");
+    fs.writeFileSync(gainPath, [
+      JSON.stringify({
+        raw_tokens_est: 100,
+        compressed_tokens_est: 100,
+        saved_tokens_est: 0,
+        changed: false,
+        rules: ["read_only_passthrough"],
+      }),
+      "not json",
+      JSON.stringify({
+        raw_tokens_est: 80,
+        compressed_tokens_est: 20,
+        saved_tokens_est: 60,
+        changed: true,
+        rules: ["importance_light_compress"],
+      }),
+      JSON.stringify({
+        raw_tokens_est: 40,
+        compressed_tokens_est: 40,
+        saved_tokens_est: 0,
+        changed: false,
+        rules: ["raw_fallback_read_passthrough"],
+      }),
+      "",
+    ].join("\n"));
+    assert.deepStrictEqual(readGainFacts(gainPath), {
+      cca_hook_observations: 3,
+      cca_hook_changed_observations: 1,
+      cca_hook_raw_tokens_est: 220,
+      cca_hook_compressed_tokens_est: 160,
+      cca_hook_saved_tokens_est: 60,
+      cca_hook_command_passthrough_observations: 2,
+      cca_hook_command_passthrough_raw_tokens_est: 140,
+      cca_hook_fallback_observations: 1,
+    });
+
     const trial = first.trials[0];
     fs.mkdirSync(path.join(retryRoot, jobName(trial)));
     fs.mkdirSync(path.join(retryRoot, retryJobName(trial, 2)));
@@ -103,6 +148,8 @@ function successfulResult(inputTokens, hookObservations) {
   assert.strictEqual(report.matched_successful_triplets, 16);
   assert.strictEqual(report.by_arm.current.passed, 16);
   assert.strictEqual(report.by_arm.current.completed, 16);
+  assert.strictEqual(report.by_arm.current.hook_local_reduction, 0.25);
+  assert.strictEqual(report.by_arm.current.hook_processable_reduction, 0.25);
   assert(report.input_token_reduction.current_vs_none >= 0.1);
   assert(report.input_token_reduction.current_vs_legacy >= 0.05);
 
