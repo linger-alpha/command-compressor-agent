@@ -127,40 +127,69 @@ node research/benchmark/cli.js static-report \
   --out research/artifacts/tb21-10x3-static-report.json
 ```
 
-The current partial corpus contains three clean no-compression `regex-log`
-trajectories with thirteen Tool Results:
+The completed fixed-input corpus contains all 30 no-compression trajectories:
+ten tasks with three repeats each. All 30 executions ended without an
+exception; 28 received reward 1 and two received reward 0. The hook captured
+336 Bash Tool Results from all ten tasks.
 
 | Same-input replay | Raw | 0.1.4 | Current | Current vs 0.1.4 |
 | --- | ---: | ---: | ---: | ---: |
-| All thirteen outputs | 1,358 | 1,358 | 913 | 32.77% fewer |
-| Ten general commands | 1,038 | 1,038 | 593 | 42.87% fewer |
+| All 336 outputs | 291,507 | 255,964 | 261,006 | 1.97% more |
+| 224 general-command outputs | 153,643 | 126,618 | 123,142 | 2.75% fewer |
 
-The trajectory-level result explains the spread:
+The all-output row includes command-policy passthroughs. The current runtime
+keeps RTK, fallback reads, and inspection/read commands unchanged, as required
+by the production policy. The 0.1.4 core did not consistently have that
+boundary. For example, it reduced one 6,219-token `rg`/`sed` inspection result
+to 641 tokens while the current runtime correctly kept all 6,219. Therefore the
+all-output regression is primarily a policy-boundary difference, not a valid
+reason to start compressing read commands again.
 
-| Repeat | Tool Results | Raw/0.1.4 | Current | Current vs 0.1.4 |
-| --- | ---: | ---: | ---: | ---: |
-| r1, all output | 2 | 267 | 171 | 35.96% fewer |
-| r2, all output | 10 | 985 | 636 | 35.43% fewer |
-| r3, all output | 1 | 106 | 106 | unchanged |
-| r1, general commands | 1 | 148 | 52 | 64.86% fewer |
-| r2, general commands | 9 | 890 | 541 | 39.21% fewer |
+On general commands, the current runtime beat 0.1.4 in eight of ten tasks:
 
-The single r3 Tool Result was a command-policy passthrough, so no general
-command row exists for r3. Its zero reduction is intentional, not a compressor
-failure. The 0.1.4 core changed none of the thirteen observations.
+| Task | 0.1.4 | Current | Current vs 0.1.4 |
+| --- | ---: | ---: | ---: |
+| `regex-log` | 1,038 | 593 | 42.87% fewer |
+| `code-from-image` | 687 | 505 | 26.49% fewer |
+| `pypi-server` | 4,645 | 3,907 | 15.89% fewer |
+| `nginx-request-logging` | 7,637 | 6,887 | 9.82% fewer |
+| `sqlite-with-gcov` | 29,682 | 27,383 | 7.75% fewer |
+| `build-cython-ext` | 28,442 | 27,247 | 4.20% fewer |
+| `extract-elf` | 30,202 | 29,289 | 3.02% fewer |
+| `count-dataset-tokens` | 19,232 | 19,042 | 0.99% fewer |
+| `log-summary-date-ranges` | 1,777 | 1,886 | 6.13% more |
+| `sqlite-db-truncate` | 3,276 | 6,403 | 95.45% more |
 
-The deterministic download probe provides a second output class:
+The current runtime retained all 62 critical lines and all 74 protected blocks.
+The legacy core retained all critical lines but only 71.62% of protected blocks.
+Within general commands, both retained all 24 critical lines, while current
+retained all 41 protected blocks and legacy retained only 48.78%.
 
-| Same-input replay | Raw | 0.1.4 | Current | Current vs 0.1.4 |
-| --- | ---: | ---: | ---: | ---: |
-| 120 progress lines | 928 | 185 | 102 | 44.86% fewer |
+The largest general-command regression is safety-related. One
+`sqlite-db-truncate` observation contained a 256-line opaque/hex block. The
+current splitter assigned that block to lossless `opaque_encoded` preservation;
+0.1.4 reduced the full observation from 4,943 to 365 estimated tokens. Removing
+only the `sqlite-db-truncate` task from the aggregate makes current 5.35% smaller
+than legacy, but the release calculation intentionally keeps the task. Safety
+coverage cannot be discarded to make the ratio pass.
 
-These results verify that the current deterministic compressor beats 0.1.4 on
-the currently observed ordinary and progress-heavy fixed inputs. They are not
-yet a general result: the primary corpus covers only one of ten tasks and has
-zero critical lines and zero encoded/protected blocks. Static release checks
-now require positive critical and protected coverage, so a vacuous retention
-ratio cannot pass.
+The corpus also exposed a separate, actionable splitter problem. One
+437-line `build-cython-ext` output became 74 planned blocks: 72 short `light`
+blocks, one `aggressive` block, and one preserved failure block. Because
+head/tail and maximum-line limits operate inside each block, most short blocks
+never reached a compression limit. A similar pattern appeared in a
+182-line `count-dataset-tokens` output split into 30 blocks. The next policy
+iteration should use this held-out corpus to reduce over-segmentation or
+coalesce adjacent low-signal blocks without weakening encoded and error
+preservation.
+
+The deterministic 120-line download probe remains a useful second output
+class: 928 raw tokens became 185 with 0.1.4 and 102 with current, or 44.86%
+fewer than legacy. It does not contain critical or protected material.
+
+The static gate correctly fails: current meets task coverage and 100% critical
+and protected retention, but its 2.75% general-command improvement is below the
+required 5%.
 
 ## Release gates
 
