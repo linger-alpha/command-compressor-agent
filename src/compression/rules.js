@@ -7,24 +7,59 @@ const { numberOr, regexTest } = require("./utils");
 
 function loadRuleSet(configuredPath) {
   const rulePath = configuredPath || process.env.COMMAND_COMPRESSOR_RULES || defaultRulePath();
+  const bundled = readRules(defaultRulePath()) || {};
+  const data = readRules(rulePath) || bundled;
+  const legacyRules = Array.isArray(data.rules) ? data.rules : [];
+  const strongRules = normalizeRules(data.strong_rules || data.strongRules || legacyRules.filter((rule) => rule.strength === "strong"));
+  const weakRules = normalizeRules(data.weak_rules || data.weakRules || legacyRules.filter((rule) => rule.strength !== "strong"));
+  const visual = data.visual_diagnostic_passthrough || {};
+  return {
+    version: numberOr(data.version, 1),
+    whitelist: []
+      .concat(Array.isArray(data.whitelist) ? data.whitelist : [])
+      .concat(Array.isArray(data.rtk_whitelist) ? data.rtk_whitelist : []),
+    visualCommandPatterns: Array.isArray(visual.command_patterns) ? visual.command_patterns : [],
+    visualOutputPatterns: Array.isArray(visual.output_patterns) ? visual.output_patterns : [],
+    strongRules,
+    weakRules,
+    splitter: mergeSection(bundled.splitter, data.splitter),
+    importance: mergeSection(bundled.importance, data.importance),
+    planner: mergePlanner(bundled.planner, data.planner),
+  };
+}
+
+function readRules(pathname) {
   try {
-    const data = JSON.parse(fs.readFileSync(rulePath, "utf8"));
-    const legacyRules = Array.isArray(data.rules) ? data.rules : [];
-    const strongRules = normalizeRules(data.strong_rules || data.strongRules || legacyRules.filter((rule) => rule.strength === "strong"));
-    const weakRules = normalizeRules(data.weak_rules || data.weakRules || legacyRules.filter((rule) => rule.strength !== "strong"));
-    const visual = data.visual_diagnostic_passthrough || {};
-    return {
-      whitelist: []
-        .concat(Array.isArray(data.whitelist) ? data.whitelist : [])
-        .concat(Array.isArray(data.rtk_whitelist) ? data.rtk_whitelist : []),
-      visualCommandPatterns: Array.isArray(visual.command_patterns) ? visual.command_patterns : [],
-      visualOutputPatterns: Array.isArray(visual.output_patterns) ? visual.output_patterns : [],
-      strongRules,
-      weakRules,
-    };
+    const value = JSON.parse(fs.readFileSync(pathname, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
-    return { whitelist: [], visualCommandPatterns: [], visualOutputPatterns: [], strongRules: [], weakRules: [] };
+    return null;
   }
+}
+
+function mergeSection(fallback, configured) {
+  const base = fallback && typeof fallback === "object" && !Array.isArray(fallback) ? fallback : {};
+  const next = configured && typeof configured === "object" && !Array.isArray(configured) ? configured : {};
+  return { ...base, ...next };
+}
+
+function mergePlanner(fallback, configured) {
+  const merged = mergeSection(fallback, configured);
+  const fallbackObject = fallback && typeof fallback === "object" ? fallback : {};
+  const configuredObject = configured && typeof configured === "object" ? configured : {};
+  merged.budget_ratios = {
+    ...(fallbackObject.budget_ratios || {}),
+    ...(configuredObject.budget_ratios || {}),
+  };
+  merged.medium = {
+    ...(fallbackObject.medium || {}),
+    ...(configuredObject.medium || {}),
+  };
+  merged.low = {
+    ...(fallbackObject.low || {}),
+    ...(configuredObject.low || {}),
+  };
+  return merged;
 }
 
 function normalizeRules(rules) {
@@ -51,6 +86,7 @@ function selectRules(rules, command, output) {
 }
 
 module.exports = {
+  defaultRulePath,
   loadRuleSet,
   selectRules,
 };

@@ -5,24 +5,28 @@ const STRENGTH_PROFILES = {
     name: "low",
     minRawTokens: 2000,
     strongOnly: true,
+    budgetRatio: 0.75,
     description: "Only compress outputs above 2k estimated tokens, and only with strong loss-resistant rules.",
   },
   default: {
     name: "default",
     minRawTokens: 2000,
     strongOnly: false,
+    budgetRatio: 0.5,
     description: "Exempt outputs below 2k estimated tokens. This is the recommended release setting.",
   },
   high: {
     name: "high",
     minRawTokens: 1000,
     strongOnly: false,
+    budgetRatio: 0.35,
     description: "Exempt outputs below 1k estimated tokens.",
   },
   xhigh: {
     name: "xhigh",
     minRawTokens: 0,
     strongOnly: false,
+    budgetRatio: 0.25,
     description: "No length exemption. Experimental and not recommended for score-sensitive work.",
   },
 };

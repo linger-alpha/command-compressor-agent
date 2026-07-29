@@ -2,38 +2,32 @@
 
 const {
   CONSERVATIVE_PASSTHROUGH_COMMAND_PATTERNS,
-  KEEP_PATTERNS,
   RAW_FALLBACK_COMMAND_PATTERNS,
-  STRIP_PATTERNS,
 } = require("./patterns");
 const {
   asInt,
   estimateTokens,
   firstString,
   matchesAny,
-  numberOr,
   objectOrEmpty,
 } = require("./utils");
 const {
-  criticalFacts,
   hasStrongCompressionCandidate,
   isCritical,
-  isCriticalContextLine,
-  isCriticalLine,
   isDenseSemanticListOutput,
   isVisualDiagnosticOutput,
 } = require("./classifiers");
 const {
-  appliedRuleIds,
   buildResult,
-  foldRepeats,
   formatRaw,
   outputLinesFromObservation,
   withHeader,
   writeRaw,
 } = require("./format");
-const { dropProgressLines, progressSummary } = require("./progress");
 const { loadRuleSet, selectRules } = require("./rules");
+const { splitBlocks } = require("./splitter");
+const { scoreBlocks } = require("./scorer");
+const { planCompression } = require("./planner");
 const { resolveStrengthProfile } = require("../config/strength");
 
 function handleClaudePostToolUse(payload, options = {}) {
@@ -94,18 +88,29 @@ function compressObservation(observation, options = {}) {
     }, critical, profile.name);
   }
 
-  const strongOnly = profile.strongOnly || !selectedWeakRules.length;
-  const [body, ids] = critical
-    ? compressCriticalLines(observation, 4, 8, 80)
-    : compressLines(observation, selectedRules, 12, 24, 120, { strongOnly });
-  let text = withHeader(observation, body, rawRef, critical ? "compressed critical output" : "compressed static output");
+  const blocks = splitBlocks(outputLinesFromObservation(observation), ruleSet.splitter);
+  const scoredBlocks = scoreBlocks(blocks, ruleSet.importance);
+  const plan = planCompression(scoredBlocks, {
+    config: ruleSet.planner,
+    rawTokens,
+    rules: selectedRules,
+    strength: profile.name,
+  });
+  let text = withHeader(observation, plan.body, rawRef, "compressed importance-planned output");
   let changed = estimateTokens(text) < rawTokens;
-  let ruleIds = ids;
+  let ruleIds = plan.ruleIds;
   if (!changed) {
     text = raw;
     ruleIds = ["no_savings_passthrough"];
   }
-  return buildResult(text, rawRef, raw, ruleIds, critical, changed, profile.name);
+  const result = buildResult(text, rawRef, raw, ruleIds, critical, changed, profile.name);
+  result.plan = {
+    targetTokens: plan.targetTokens,
+    plannedTokens: plan.plannedTokens,
+    budgetExceeded: plan.budgetExceeded,
+    blocks: plan.blocks,
+  };
+  return result;
 }
 
 function passthroughReason(observation, raw, ruleSet, critical, rawDir) {
@@ -121,7 +126,7 @@ function passthroughReason(observation, raw, ruleSet, critical, rawDir) {
   if (isVisualDiagnosticOutput(observation, raw, ruleSet)) {
     return { status: "visual diagnostic passthrough", rules: ["visual_diagnostic_passthrough"] };
   }
-  if (!critical && isDenseSemanticListOutput(observation)) {
+  if (isDenseSemanticListOutput(observation)) {
     return { status: "semantic list passthrough", rules: ["semantic_list_passthrough"] };
   }
   return null;
@@ -160,96 +165,6 @@ function observationFromPayload(payload) {
     agent: "claude-code",
     toolName: firstString(payload.tool_name, "Bash"),
   };
-}
-
-function compressLines(observation, rules, keepFirstN, keepLastN, maxLines, options = {}) {
-  const keepPatterns = KEEP_PATTERNS.concat(rules.flatMap((rule) => rule.keep_patterns || []));
-  const stripPatterns = STRIP_PATTERNS.concat(rules.flatMap((rule) => rule.strip_patterns || []));
-  const settings = lineSettings(rules, keepFirstN, keepLastN, maxLines);
-  const outputLines = outputLinesFromObservation(observation);
-  const [lines, progressOmitted, progressMetrics, progressSamples] = dropProgressLines(outputLines);
-
-  if (options.strongOnly) {
-    const keptStrong = lines.filter((line) => !matchesAny(stripPatterns, line));
-    return retainedBody(keptStrong, outputLines, progressOmitted, progressMetrics, progressSamples, "strong-rule noise lines", appliedRuleIds(rules, "strong_noise_strip"));
-  }
-  if (lines.length <= settings.maxLines) {
-    const keptShort = lines.filter((line) => !matchesAny(stripPatterns, line));
-    if (keptShort.length < outputLines.length) {
-      return retainedBody(keptShort, outputLines, progressOmitted, progressMetrics, progressSamples, "low-signal lines", appliedRuleIds(rules, "progress_strip"));
-    }
-    return [foldRepeats(lines).join("\n") + "\n", ["ansi_strip", "repeat_fold"]];
-  }
-
-  const kept = [];
-  lines.forEach((line, index) => {
-    const reason = keepReason(index, line, lines.length, settings, keepPatterns, stripPatterns);
-    if (reason) kept.push(`L${index + 1}: ${line}`);
-  });
-  return retainedBody(kept, outputLines, progressOmitted, progressMetrics, progressSamples, "low-signal lines", appliedRuleIds(rules, "static_keep_patterns"));
-}
-
-function compressCriticalLines(observation, keepFirstN, keepLastN, maxLines) {
-  const outputLines = outputLinesFromObservation(observation);
-  const [lines, progressOmitted, progressMetrics, progressSamples] = dropProgressLines(outputLines);
-  const keptEntries = selectedCriticalEntries(lines, keepFirstN, keepLastN, maxLines);
-  const retained = keptEntries.map(([index, reason]) => `L${index + 1} [${reason}]: ${lines[index]}`);
-  const body = [
-    `[compressed] retained ${keptEntries.length} of ${outputLines.length} output lines; omitted ${Math.max(0, outputLines.length - keptEntries.length)} low-signal lines.`,
-    "[critical facts retained]",
-    ...criticalFacts(lines),
-    ...progressSummary(progressOmitted, progressMetrics, progressSamples),
-    "[retained output]",
-    ...foldRepeats(retained),
-  ];
-  return [body.join("\n").trimEnd() + "\n", ["ansi_strip", "critical_fact_keep", "head_tail", "repeat_fold"]];
-}
-
-function selectedCriticalEntries(lines, keepFirstN, keepLastN, maxLines) {
-  const kept = new Map();
-  const mark = (index, reason) => {
-    if (index >= 0 && index < lines.length && !kept.has(index)) kept.set(index, reason);
-  };
-  lines.forEach((line, index) => {
-    if (index < keepFirstN) mark(index, "head");
-    if (index >= lines.length - keepLastN) mark(index, "tail");
-    if (isCriticalLine(line) || isCriticalContextLine(line)) {
-      for (let offset = -1; offset <= 1; offset += 1) mark(index + offset, offset === 0 ? "critical" : "critical_context");
-    }
-  });
-  let entries = Array.from(kept.entries()).sort((a, b) => a[0] - b[0]);
-  if (entries.length <= maxLines) return entries;
-  const priority = new Set(["critical", "critical_context"]);
-  const prioritized = entries.filter(([, reason]) => priority.has(reason));
-  const remaining = entries.filter(([, reason]) => !priority.has(reason));
-  return prioritized.concat(remaining).slice(0, maxLines).sort((a, b) => a[0] - b[0]);
-}
-
-function lineSettings(rules, keepFirstN, keepLastN, maxLines) {
-  if (!rules.length) return { keepFirstN, keepLastN, maxLines };
-  return {
-    keepFirstN: Math.min(...rules.map((rule) => numberOr(rule.keep_first_n, keepFirstN))),
-    keepLastN: Math.max(...rules.map((rule) => numberOr(rule.keep_last_n, keepLastN))),
-    maxLines: Math.min(...rules.map((rule) => numberOr(rule.max_lines, maxLines))),
-  };
-}
-
-function keepReason(index, line, lineCount, settings, keepPatterns, stripPatterns) {
-  if (index < settings.keepFirstN) return "head";
-  if (index >= lineCount - settings.keepLastN) return "tail";
-  if (matchesAny(keepPatterns, line)) return "keep_pattern";
-  if (matchesAny(stripPatterns, line)) return "";
-  return "";
-}
-
-function retainedBody(lines, outputLines, progressOmitted, progressMetrics, progressSamples, omittedLabel, ruleIds) {
-  const body = [
-    `[compressed] retained ${lines.length} of ${outputLines.length} output lines; omitted ${Math.max(0, outputLines.length - lines.length)} ${omittedLabel}.`,
-    ...progressSummary(progressOmitted, progressMetrics, progressSamples),
-    "[retained output]",
-    ...foldRepeats(lines),
-  ];
-  return [body.join("\n").trimEnd() + "\n", ruleIds];
 }
 
 function compressionContext(result) {
