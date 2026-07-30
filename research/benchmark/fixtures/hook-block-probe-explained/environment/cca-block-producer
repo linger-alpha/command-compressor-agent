@@ -1,0 +1,17 @@
+#!/bin/sh
+
+runs=0
+if [ -f /app/hook-block-runs ]; then
+  runs=$(cat /app/hook-block-runs)
+fi
+printf '%s\n' "$((runs + 1))" > /app/hook-block-runs
+
+record=1
+while [ "$record" -le 120 ]; do
+  if [ "$record" -eq 61 ]; then
+    printf 'Downloading package %s%% 1MB/s code=COBALT-4826\n' "$record"
+  else
+    printf 'Downloading package %s%% 1MB/s\n' "$record"
+  fi
+  record=$((record + 1))
+done

@@ -2,6 +2,6 @@ FROM ubuntu:24.04
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends perl \
-    && rm -rf /var/lib/apt/lists/*
+COPY cca-block-producer /usr/local/bin/cca-block-producer
+
+RUN chmod 0755 /usr/local/bin/cca-block-producer

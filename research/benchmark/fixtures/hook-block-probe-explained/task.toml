@@ -3,7 +3,7 @@ artifacts = []
 
 [task]
 name = "cca/hook-block-probe-explained"
-description = "Tests explained PostToolUse block feedback and raw_ref recovery."
+description = "Tests explained PostToolUse block feedback and raw_ref recovery without exposing the target in the instruction."
 keywords = ["hooks", "compression", "block-feedback", "raw-ref"]
 
 [agent]
