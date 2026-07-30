@@ -99,6 +99,7 @@ an error result, but the command has already executed. Both probes passed:
 | --- | ---: | --- |
 | No semantic explanation; retained target | 978 → 91 tokens | target used, producer ran once |
 | Hook explanation; target omitted | 1,143 → 245 tokens across two replacements | `raw_ref` read, producer ran once |
+| Production adapter wording; target omitted | 1,075 → 174 tokens across two replacements | `raw_ref` read, producer ran once |
 
 The rollout contained the compressed text instead of the original 120 lines.
 In the second probe, the model followed the hook's explanation, searched the
@@ -106,6 +107,12 @@ raw file for the omitted record, and did not rerun the producer command. CCA
 therefore uses blocked feedback only when compression actually changes the
 result, and explains that the command already ran. Whitelisted, unchanged, and
 fail-open results return no block decision.
+
+The production replay also exposed a one-word follow-up result that the core
+had classified as changed because its raw archive includes the command text.
+The Codex adapter now applies an additional model-visible savings gate: the
+complete explanation plus compressed result must be shorter than the actual
+stdout/stderr, otherwise it returns no block decision.
 
 The dynamic experiment can now measure real model-visible compression. The
 blocked/failed presentation remains a known Codex UI semantic cost and should

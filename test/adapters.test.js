@@ -81,7 +81,15 @@ function options(changed, observations) {
     agent: "codex",
     toolName: "Bash",
   });
-  const changed = handleCodexPostToolUse(payload, options(true, []));
+  assert.deepStrictEqual(
+    handleCodexPostToolUse(payload, options(true, [])),
+    {},
+    "Codex must not turn a short result into blocked feedback"
+  );
+  const changed = handleCodexPostToolUse({
+    ...payload,
+    tool_response: { output: "building\n".repeat(200), exitCode: 2 },
+  }, options(true, []));
   assert.deepStrictEqual(changed, {
     decision: "block",
     reason: `${CODEX_BLOCK_PREFIX}[compressed output]`,

@@ -72,6 +72,16 @@ function compressForAdapter(observation, options = {}) {
     rawDir: config.rawDir,
     strength: config.strength,
   });
+  if (
+    result.changed &&
+    typeof options.acceptReplacement === "function" &&
+    !options.acceptReplacement(result, observation)
+  ) {
+    result.changed = false;
+    result.ruleIds = Array.isArray(result.ruleIds)
+      ? [...result.ruleIds, "adapter_no_visible_savings"]
+      : ["adapter_no_visible_savings"];
+  }
   if (options.record !== false) recordCompressionEvent(config, observation, result);
   return result;
 }

@@ -7,6 +7,7 @@ const {
   normalizedResponse,
   readStdin,
 } = require("./common");
+const { estimateTokens } = require("../compression/utils");
 
 const CODEX_BLOCK_PREFIX = [
   "The command already ran; Codex marks this result as blocked only because its output was replaced.",
@@ -26,7 +27,16 @@ function observationFromCodex(payload) {
 
 function handleCodexPostToolUse(payload, options = {}) {
   const observation = observationFromCodex(payload);
-  const result = compressForAdapter(observation, options);
+  const originalOutput = [observation.stdout, observation.stderr]
+    .filter(Boolean)
+    .join("\n");
+  const result = compressForAdapter(observation, {
+    ...options,
+    acceptReplacement(candidate) {
+      const reason = `${CODEX_BLOCK_PREFIX}${candidate.text}`;
+      return estimateTokens(reason) < estimateTokens(originalOutput);
+    },
+  });
   if (!result.changed) return {};
   return {
     decision: "block",

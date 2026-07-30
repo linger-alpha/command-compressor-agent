@@ -66,7 +66,8 @@ trust step during a normal install. Codex currently exposes model-visible
 replacement in code mode through blocked `PostToolUse` feedback, so its UI
 labels a compressed result as failed/blocked even though the command already
 ran. CCA includes a short explanation in that feedback to prevent unnecessary
-reruns. OpenCode v2 beta is not supported by this release.
+reruns, and does not block when the complete feedback would be no shorter than
+the actual stdout/stderr. OpenCode v2 beta is not supported by this release.
 
 Check the current configuration:
 

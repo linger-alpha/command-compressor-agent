@@ -48,7 +48,8 @@ cca install --pi --global
 `/hooks` 中人工审核信任；CCA 不会绕过这一环节。Codex 当前通过 blocked
 `PostToolUse` feedback 在 code mode 中替换模型可见结果，因此界面会把压缩
 结果显示成 failed/blocked，虽然命令其实已经执行。CCA 会在 feedback 中用
-一句简短说明避免模型因此重复执行。OpenCode v2 beta 暂不支持。
+一句简短说明避免模型因此重复执行；如果完整 feedback 不比实际 stdout/stderr
+更短，则不会返回 block。OpenCode v2 beta 暂不支持。
 
 查看当前配置：
 
