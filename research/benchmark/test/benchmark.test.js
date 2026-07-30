@@ -388,7 +388,16 @@ function successfulResult(inputTokens, hookObservations) {
         type: "response_item",
         payload: {
           type: "function_call_output",
-          output: "[compressed output; fallback raw_ref: /tmp/raw]\nkept",
+          call_id: "call-original",
+          output: "[compressed output; fallback raw_ref: /tmp/raw-1.log]\nkept",
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-log-search",
+          output: "[compressed output; fallback raw_ref: /tmp/raw-1.log]\\nkept",
         },
       }),
       JSON.stringify({

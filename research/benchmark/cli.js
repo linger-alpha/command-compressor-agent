@@ -577,10 +577,10 @@ function withArtifactFacts(result, jobDir) {
 function readModelVisibleCompressionFacts(trialDir) {
   const sessionsDir = trialDir && path.join(trialDir, "agent", "sessions");
   if (!sessionsDir || !fs.existsSync(sessionsDir)) return 0;
-  let count = 0;
+  const replacements = new Set();
   for (const pathname of filesUnder(sessionsDir)) {
     if (!pathname.endsWith(".jsonl")) continue;
-    for (const event of readJsonLines(pathname)) {
+    for (const [index, event] of readJsonLines(pathname).entries()) {
       if (event.type !== "response_item") continue;
       const payload = event.payload;
       if (!payload || ![
@@ -593,10 +593,20 @@ function readModelVisibleCompressionFacts(trialDir) {
       if (
         output.includes("[compressed output") ||
         output.includes("[command-compressor]")
-      ) count += 1;
+      ) {
+        const rawRefs = Array.from(
+          output.matchAll(/raw_ref:\s*(\/[^\\\]\s"]+\.log)/g),
+          (match) => match[1]
+        );
+        if (rawRefs.length) {
+          for (const rawRef of rawRefs) replacements.add(`raw:${rawRef}`);
+        } else {
+          replacements.add(`event:${pathname}:${payload.call_id || index}`);
+        }
+      }
     }
   }
-  return count;
+  return replacements.size;
 }
 
 function readCodeModeExecCalls(trialDir) {
