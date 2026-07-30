@@ -7,6 +7,10 @@ const {
   normalizedObservation,
   textContent,
 } = require("./common");
+const {
+  replacementIsSmaller,
+  standardReplacementText,
+} = require("./presentation");
 
 function observationFromOpenCode(input, output) {
   const metadata = objectOrEmpty(output && output.metadata);
@@ -25,8 +29,16 @@ function handleOpenCodeToolAfter(input, output, options = {}) {
   if (!output || typeof output !== "object") return { changed: false };
   try {
     const observation = observationFromOpenCode(input, output);
-    const result = compressForAdapter(observation, options);
-    if (result.changed) output.output = result.text;
+    const result = compressForAdapter(observation, {
+      ...options,
+      acceptReplacement(candidate) {
+        return replacementIsSmaller(
+          observation,
+          standardReplacementText(candidate)
+        );
+      },
+    });
+    if (result.changed) output.output = standardReplacementText(result);
     return { changed: result.changed, result };
   } catch (error) {
     return {

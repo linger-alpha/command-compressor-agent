@@ -108,7 +108,9 @@ compressed result in `reason`; stable OpenCode mutates the
 `tool.execute.after` output; and Pi replaces `tool_result.content` while
 preserving `details` and `isError`. Every adapter normalizes to the same
 `{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
-an exception. Real Codex 0.146.0 + Luna probes confirmed that `stopReason` is
+an exception. Adapter-owned presentation tells the model that CCA compressed
+the output and recommends searching the local `raw_ref` instead of rerunning
+the command. Real Codex 0.146.0 + Luna probes confirmed that `stopReason` is
 ignored in code mode, while blocked feedback replaces the model-visible result,
 does not undo the already completed command, and supports `raw_ref` fallback.
 
@@ -118,9 +120,10 @@ into coarse rule-based blocks, classifies each block as `preserve`, `light`, or
 `aggressive`, and then applies the existing static rules at that tier. Encoded,
 binary-looking, dense-semantic, visual, traceback, and real failure blocks are
 retained losslessly. Progress and duplicate blocks can be compressed strongly.
-There is no whole-output token threshold or global token budget. The output
-header only says that compression occurred and gives a `raw_ref` path; scores,
-tiers, and rule diagnostics are not shown to the coding agent.
+There is no whole-output token threshold or global token budget. The compression
+core returns compressed text plus a `raw_ref`; the takeover layer adds the
+Agent-facing explanation. Scores, tiers, and rule diagnostics are not shown to
+the coding agent.
 
 The evaluation layer appends local JSONL events and powers `cca gain`, which reports estimated raw tokens, effective tokens, compressed observations, and estimated saved tokens.
 

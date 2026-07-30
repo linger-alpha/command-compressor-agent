@@ -344,8 +344,11 @@ function successfulResult(inputTokens, hookObservations) {
       CCA_RUNTIME_ROOT: path.resolve(__dirname, "..", "..", ".."),
     });
     assert.strictEqual(explainedBlockPatch.decision, "block");
-    assert.match(explainedBlockPatch.reason, /^The command already ran;/);
-    assert.match(explainedBlockPatch.reason, /read raw_ref instead of rerunning/);
+    assert.match(explainedBlockPatch.reason, /^The command already ran\./);
+    assert.match(
+      explainedBlockPatch.reason,
+      /search the raw_ref below locally instead of rerunning/
+    );
     assert.match(explainedBlockPatch.reason, /fallback raw_ref/);
     assert.strictEqual(readJsonLines(observationsPath).length, 5);
 

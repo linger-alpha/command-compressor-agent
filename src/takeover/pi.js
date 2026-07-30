@@ -7,6 +7,10 @@ const {
   normalizedObservation,
   textContent,
 } = require("./common");
+const {
+  replacementIsSmaller,
+  standardReplacementText,
+} = require("./presentation");
 
 function observationFromPi(event) {
   const details = objectOrEmpty(event.details);
@@ -24,10 +28,18 @@ function handlePiToolResult(event, options = {}) {
   if (!event || String(event.toolName || "").toLowerCase() !== "bash") return undefined;
   try {
     const observation = observationFromPi(event);
-    const result = compressForAdapter(observation, options);
+    const result = compressForAdapter(observation, {
+      ...options,
+      acceptReplacement(candidate) {
+        return replacementIsSmaller(
+          observation,
+          standardReplacementText(candidate)
+        );
+      },
+    });
     if (!result.changed) return undefined;
     return {
-      content: [{ type: "text", text: result.text }],
+      content: [{ type: "text", text: standardReplacementText(result) }],
     };
   } catch {
     return undefined;

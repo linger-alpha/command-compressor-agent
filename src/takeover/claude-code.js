@@ -8,6 +8,10 @@ const {
   normalizedResponse,
   readStdin,
 } = require("./common");
+const {
+  replacementIsSmaller,
+  standardReplacementText,
+} = require("./presentation");
 
 function observationFromClaude(payload) {
   const response = normalizedResponse(payload.tool_response || payload.output || payload.tool_output);
@@ -21,7 +25,15 @@ function observationFromClaude(payload) {
 
 function handleClaudePostToolUse(payload, options = {}) {
   const observation = observationFromClaude(payload);
-  const result = compressForAdapter(observation, options);
+  const result = compressForAdapter(observation, {
+    ...options,
+    acceptReplacement(candidate) {
+      return replacementIsSmaller(
+        observation,
+        standardReplacementText(candidate)
+      );
+    },
+  });
 
   const hookOutput = {
     hookEventName: "PostToolUse",
@@ -29,7 +41,7 @@ function handleClaudePostToolUse(payload, options = {}) {
   if (result.changed) {
     const toolResponse = objectOrEmpty(payload.tool_response);
     hookOutput.updatedToolOutput = {
-      stdout: result.text,
+      stdout: standardReplacementText(result),
       stderr: "",
       interrupted: Boolean(toolResponse.interrupted),
       isImage: Boolean(toolResponse.isImage),

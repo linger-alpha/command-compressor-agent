@@ -19,6 +19,9 @@ const {
   handlePiToolResult,
   observationFromPi,
 } = require("../src/takeover/pi");
+const {
+  STANDARD_REPLACEMENT_PREFIX,
+} = require("../src/takeover/presentation");
 
 function result(changed) {
   return {
@@ -59,10 +62,21 @@ function options(changed, observations) {
     toolName: "Bash",
   });
   const observations = [];
-  const response = handleClaudePostToolUse(payload, options(true, observations));
-  assert.strictEqual(response.hookSpecificOutput.updatedToolOutput.stdout, "[compressed output]");
+  const response = handleClaudePostToolUse({
+    ...payload,
+    tool_response: {
+      ...payload.tool_response,
+      stdout: "hello\n".repeat(200),
+    },
+  }, options(true, observations));
+  assert.strictEqual(
+    response.hookSpecificOutput.updatedToolOutput.stdout,
+    `${STANDARD_REPLACEMENT_PREFIX}[compressed output]`
+  );
   assert.strictEqual(response.hookSpecificOutput.updatedToolOutput.interrupted, true);
   assert.strictEqual(observations[0].agent, "claude-code");
+  const tooShort = handleClaudePostToolUse(payload, options(true, []));
+  assert.strictEqual(tooShort.hookSpecificOutput.updatedToolOutput, undefined);
   const unchanged = handleClaudePostToolUse(payload, options(false, []));
   assert.strictEqual(unchanged.hookSpecificOutput.updatedToolOutput, undefined);
 }
@@ -95,7 +109,7 @@ function options(changed, observations) {
     reason: `${CODEX_BLOCK_PREFIX}[compressed output]`,
   });
   assert.match(changed.reason, /command already ran/i);
-  assert.match(changed.reason, /read raw_ref instead of rerunning/i);
+  assert.match(changed.reason, /search the raw_ref below locally instead of rerunning/i);
   assert.deepStrictEqual(handleCodexPostToolUse(payload, options(false, [])), {});
   assert.throws(
     () => handleCodexPostToolUse(payload, { config: {}, record: false, compress() { throw new Error("boom"); } }),
@@ -105,12 +119,25 @@ function options(changed, observations) {
 
 {
   const input = { tool: "bash", args: { command: "npm install" } };
-  const output = { title: "Install", output: "Downloading", metadata: { exitCode: 0, keep: true } };
+  const output = {
+    title: "Install",
+    output: "Downloading\n".repeat(200),
+    metadata: { exitCode: 0, keep: true },
+  };
   assert.strictEqual(observationFromOpenCode(input, output).command, "npm install");
   const response = handleOpenCodeToolAfter(input, output, options(true, []));
   assert.strictEqual(response.changed, true);
-  assert.strictEqual(output.output, "[compressed output]");
+  assert.strictEqual(
+    output.output,
+    `${STANDARD_REPLACEMENT_PREFIX}[compressed output]`
+  );
   assert.deepStrictEqual(output.metadata, { exitCode: 0, keep: true });
+  const short = { output: "Downloading", metadata: { exitCode: 0 } };
+  assert.strictEqual(
+    handleOpenCodeToolAfter(input, short, options(true, [])).changed,
+    false
+  );
+  assert.strictEqual(short.output, "Downloading");
   const ignored = { output: "unchanged" };
   handleOpenCodeToolAfter({ tool: "read" }, ignored, options(true, []));
   assert.strictEqual(ignored.output, "unchanged");
@@ -129,14 +156,26 @@ function options(changed, observations) {
   const event = {
     toolName: "bash",
     input: { command: "cargo test" },
-    content: [{ type: "text", text: "running tests" }],
+    content: [{ type: "text", text: "running tests\n".repeat(200) }],
     details: { exitCode: 1, preserved: true },
     isError: true,
   };
-  assert.strictEqual(observationFromPi(event).stdout, "running tests");
+  assert.strictEqual(
+    observationFromPi(event).stdout,
+    "running tests\n".repeat(200)
+  );
   const patch = handlePiToolResult(event, options(true, []));
-  assert.deepStrictEqual(patch, { content: [{ type: "text", text: "[compressed output]" }] });
+  assert.deepStrictEqual(patch, {
+    content: [{
+      type: "text",
+      text: `${STANDARD_REPLACEMENT_PREFIX}[compressed output]`,
+    }],
+  });
   assert.strictEqual(patch.details, undefined, "Pi adapter must omit details so Pi preserves it");
+  assert.strictEqual(handlePiToolResult({
+    ...event,
+    content: [{ type: "text", text: "short" }],
+  }, options(true, [])), undefined);
   assert.strictEqual(handlePiToolResult(event, options(false, [])), undefined);
   assert.strictEqual(handlePiToolResult({ toolName: "read" }, options(true, [])), undefined);
   assert.strictEqual(handlePiToolResult(event, {

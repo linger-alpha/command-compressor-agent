@@ -86,7 +86,9 @@ takeover layer 统一将四种 Agent 的工具结果归一化。Claude Code 使�
 `updatedToolOutput`；Codex adapter 使用
 `decision:"block" + reason`；OpenCode
 稳定版修改 `tool.execute.after` 的输出；Pi 替换 `tool_result.content`，
-同时保留 `details/isError`。所有 adapter 异常时都会 fail open。真实的
+同时保留 `details/isError`。面向模型的说明文字归 takeover/adapter 层所有：
+它会说明输出已经被 CCA 压缩，并建议在本地搜索 `raw_ref`，不要重跑命令。
+所有 adapter 异常时都会 fail open。真实的
 Codex 0.146.0 + Luna 探针已经确认 code mode 会忽略 `stopReason`，但
 blocked feedback 能替换模型可见结果，不会撤销已经完成的命令，并能引导
 模型在压缩遗漏目标信息时读取 `raw_ref`。
@@ -95,8 +97,9 @@ compression layer 先豁免 RTK、查阅命令和 raw fallback read，再清除 
 用线性规则把输出分成较粗的块，将每块归为 `preserve`、`light` 或
 `aggressive`，最后应用现有静态规则。编码/二进制样式、密集语义、视觉结构、
 traceback 和真实失败块无损保留；进度和重复块可以高强度压缩。这里没有整段
-token 门槛和全局 token budget。Agent 只会看到压缩文本和 `raw_ref`，不会看到
-内部得分、档位或规则诊断。
+token 门槛和全局 token budget。compression core 只返回压缩文本和
+`raw_ref`，takeover layer 再添加 Agent 说明；Agent 不会看到内部得分、档位
+或规则诊断。
 
 evaluation layer 追加本地 JSONL 事件，并驱动 `cca gain`。它会报告估算 raw tokens、effective tokens、压缩观察次数和估算节省 tokens。
 
