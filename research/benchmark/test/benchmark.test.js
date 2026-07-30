@@ -9,6 +9,10 @@ const { handlePayload } = require("../hook-runner");
 const { buildProbeConfig, buildProbeReport } = require("../hook-probe");
 const { buildStaticReplayReport } = require("../static-replay");
 const {
+  selectCandidate,
+  splitForRecord,
+} = require("../splitter-merge-study");
+const {
   ARMS,
   captureMatchesManifest,
   createManifest,
@@ -49,6 +53,53 @@ function successfulResult(inputTokens, hookObservations) {
 }
 
 (() => {
+  assert.strictEqual(splitForRecord({ repeat: 1 }), "train");
+  assert.strictEqual(splitForRecord({ repeat: 2 }), "validation");
+  assert.strictEqual(splitForRecord({ repeat: 3 }), "test");
+  const safeMetrics = (reduction, overrides = {}) => ({
+    reduction_vs_current: reduction,
+    critical_fact_retention: 1,
+    protected_block_retention: 1,
+    encoded_block_retention: 1,
+    passthrough_violations: 0,
+    ...overrides,
+  });
+  const selection = selectCandidate([
+    {
+      id: "validation-winner",
+      merge: { max_separator_lines: 2 },
+      metrics: {
+        train_general: safeMetrics(0.1),
+        validation_general: safeMetrics(0.2),
+        test_general: safeMetrics(-0.5),
+      },
+    },
+    {
+      id: "test-winner",
+      merge: { max_separator_lines: 1 },
+      metrics: {
+        train_general: safeMetrics(0.1),
+        validation_general: safeMetrics(0.1),
+        test_general: safeMetrics(0.9),
+      },
+    },
+    {
+      id: "unsafe-validation",
+      merge: { max_separator_lines: 4 },
+      metrics: {
+        train_general: safeMetrics(0.3),
+        validation_general: safeMetrics(0.3, { encoded_block_retention: 0.9 }),
+        test_general: safeMetrics(0.3),
+      },
+    },
+  ]);
+  assert.strictEqual(
+    selection.selected,
+    "validation-winner",
+    "held-out test metrics must not influence candidate selection"
+  );
+  assert.strictEqual(selection.accepted, false, "the held-out test remains an acceptance gate");
+
   const first = createManifest({ seed: 20260729, repeats: 3 });
   const second = createManifest({ seed: 20260729, repeats: 3 });
   assert.strictEqual(first.trials.length, 90);

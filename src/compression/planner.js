@@ -21,10 +21,13 @@ const DEFAULT_PLANNER = {
 function planCompression(scoredBlocks, options = {}) {
   const settings = normalizePlanner(options.config);
   const rules = Array.isArray(options.rules) ? options.rules : [];
-  const groups = coalesceScoredBlocks(scoredBlocks);
+  const groups = coalesceScoredBlocks(scoredBlocks, settings.mergeAdjacentLowValue);
   const candidates = groups.map((scored) => blockCandidate(scored, rules, settings));
   const body = candidates.map((candidate) => candidate.text).join("\n").trimEnd() + "\n";
   const ruleIds = new Set(["ansi_strip", "block_splitter", "importance_scorer", "compression_planner"]);
+  if (groups.some((scored) => scored.mergedLowValue)) {
+    ruleIds.add("adjacent_low_value_merge");
+  }
   for (const candidate of candidates) {
     for (const ruleId of candidate.ruleIds) ruleIds.add(ruleId);
   }
@@ -45,36 +48,75 @@ function planCompression(scoredBlocks, options = {}) {
   };
 }
 
-function coalesceScoredBlocks(scoredBlocks) {
+function coalesceScoredBlocks(scoredBlocks, mergeConfig = {}) {
+  const mergeSettings = normalizeMergeSettings(mergeConfig);
   const output = [];
+  let pendingSeparators = [];
   for (const scored of scoredBlocks) {
     if (!scored || !scored.block) continue;
     if (scored.block.separator) {
-      output.push(scored);
+      pendingSeparators.push(scored);
       continue;
     }
     const previous = output[output.length - 1];
     if (
-      previous &&
-      !previous.block.separator &&
-      previous.tier === scored.tier &&
-      previous.block.kind === scored.block.kind
+      pendingSeparators.length &&
+      canMergeLowValue(previous, scored, pendingSeparators, mergeSettings)
     ) {
-      previous.block.endLine = scored.block.endLine;
-      previous.block.lines.push(...scored.block.lines);
-      previous.reasons = mergeReasons(previous.reasons, scored.reasons);
+      mergeScoredBlock(previous, scored, pendingSeparators, true);
+      pendingSeparators = [];
       continue;
     }
-    output.push({
-      ...scored,
-      block: {
-        ...scored.block,
-        lines: scored.block.lines.slice(),
-      },
-      reasons: Array.isArray(scored.reasons) ? scored.reasons.slice() : [],
-    });
+    output.push(...pendingSeparators);
+    pendingSeparators = [];
+    const adjacent = output[output.length - 1];
+    if (
+      adjacent &&
+      !adjacent.block.separator &&
+      adjacent.tier === scored.tier &&
+      adjacent.block.kind === scored.block.kind
+    ) {
+      mergeScoredBlock(adjacent, scored);
+      continue;
+    }
+    if (canMergeLowValue(adjacent, scored, [], mergeSettings)) {
+      mergeScoredBlock(adjacent, scored, [], true);
+      continue;
+    }
+    output.push(cloneScoredBlock(scored));
   }
+  output.push(...pendingSeparators);
   return output;
+}
+
+function canMergeLowValue(previous, current, separators, settings) {
+  if (!settings.enabled || !previous || previous.block.separator) return false;
+  if (previous.tier !== current.tier || !settings.tiers.has(current.tier)) return false;
+  const separatorLines = separators.reduce(
+    (total, scored) => total + scored.block.lines.length,
+    0
+  );
+  return separatorLines <= settings.maxSeparatorLines;
+}
+
+function mergeScoredBlock(target, source, separators = [], lowValue = false) {
+  target.block.endLine = source.block.endLine;
+  for (const separator of separators) target.block.lines.push(...separator.block.lines);
+  target.block.lines.push(...source.block.lines);
+  if (target.block.kind !== source.block.kind) target.block.kind = "mixed";
+  target.reasons = mergeReasons(target.reasons, source.reasons);
+  if (lowValue) target.mergedLowValue = true;
+}
+
+function cloneScoredBlock(scored) {
+  return {
+    ...scored,
+    block: {
+      ...scored.block,
+      lines: scored.block.lines.slice(),
+    },
+    reasons: Array.isArray(scored.reasons) ? scored.reasons.slice() : [],
+  };
 }
 
 function mergeReasons(left = [], right = []) {
@@ -232,6 +274,31 @@ function normalizePlanner(config = {}) {
   return {
     light: normalizeStrategy(light, DEFAULT_PLANNER.light),
     aggressive: normalizeStrategy(aggressive, DEFAULT_PLANNER.aggressive),
+    mergeAdjacentLowValue: normalizeMergeSettings(
+      config.merge_adjacent_low_value || config.mergeAdjacentLowValue
+    ),
+  };
+}
+
+function normalizeMergeSettings(config = {}) {
+  const configuredTiers = config.tiers instanceof Set
+    ? Array.from(config.tiers)
+    : Array.isArray(config.tiers)
+      ? config.tiers
+      : ["light"];
+  const tiers = configuredTiers.filter(
+    (tier) => tier === "light" || tier === "aggressive"
+  );
+  return {
+    enabled: config.enabled === true,
+    maxSeparatorLines: Math.max(
+      0,
+      Math.min(8, Math.floor(numberOr(
+        config.max_separator_lines,
+        numberOr(config.maxSeparatorLines, 1)
+      )))
+    ),
+    tiers: new Set(tiers),
   };
 }
 

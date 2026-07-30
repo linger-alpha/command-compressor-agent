@@ -125,7 +125,10 @@ v3 默认规则文件包括：
   progress 和高重复日志；
 - `weak_rules`：来自离线轨迹的 TACO-inspired 静态规则，保留 head/tail 和
   重要行；发布 runtime 不做在线学习；
-- `planner`：分别定义轻压缩和高压缩的静态保留策略。
+- `planner`：分别定义轻压缩和高压缩的静态保留策略。相邻 `light` 块可跨
+  最多两个空行合并后再规划保留范围；该参数由 336 条真实 TerminalBench
+  tool result 筛选得到，并将第三次重复留作最终验收。`preserve` 块从不参与
+  合并。
 
 raw fallback read 也会被白名单保护。读取已配置 raw 目录的命令，通常是 `.command-compressor-agent/raw`，不会被再次压缩。
 

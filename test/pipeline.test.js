@@ -180,6 +180,65 @@ function block(lines, startLine = 1) {
 }
 
 {
+  const separator = {
+    startLine: 3,
+    endLine: 3,
+    lines: [""],
+    separator: true,
+    kind: "separator",
+  };
+  const scored = [
+    { block: block(["first", "detail"], 1), tier: "light", reasons: [] },
+    { block: separator, tier: "aggressive", reasons: [] },
+    { block: { ...block(["second"], 4), kind: "log" }, tier: "light", reasons: [] },
+  ];
+  const unchanged = planCompression(scored, {
+    config: {},
+    rules: [],
+  });
+  assert.strictEqual(unchanged.blocks.length, 2, "merge candidate must be opt-in");
+  const merged = planCompression(scored, {
+    config: {
+      merge_adjacent_low_value: {
+        enabled: true,
+        max_separator_lines: 1,
+        tiers: ["light"],
+      },
+    },
+    rules: [],
+  });
+  assert.strictEqual(merged.blocks.length, 1);
+  assert(merged.body.includes("first\ndetail\n\nsecond"));
+  assert(merged.ruleIds.includes("adjacent_low_value_merge"));
+
+  const encoded = {
+    ...block(["A".repeat(256)], 4),
+    kind: "opaque",
+  };
+  const protectedPlan = planCompression([
+    { block: block(["ordinary"], 1), tier: "light", reasons: [] },
+    { block: separator, tier: "aggressive", reasons: [] },
+    {
+      block: encoded,
+      tier: "preserve",
+      reasons: [{ id: "opaque_encoded", tier: "preserve" }],
+    },
+  ], {
+    config: {
+      merge_adjacent_low_value: {
+        enabled: true,
+        max_separator_lines: 1,
+        tiers: ["light", "aggressive"],
+      },
+    },
+    rules: [],
+  });
+  assert.strictEqual(protectedPlan.blocks.length, 2);
+  assert.strictEqual(protectedPlan.blocks[1].tier, "preserve");
+  assert(protectedPlan.body.includes("A".repeat(256)));
+}
+
+{
   const mediumBlock = block(["warning: check configuration", ...Array.from({ length: 120 }, (_, index) => `detail ${index}`)]);
   const lowBlock = block(Array.from({ length: 120 }, (_, index) => `Downloading part ${index} ${index}%|██`), 122);
   const planned = planCompression([
@@ -217,6 +276,11 @@ function block(lines, startLine = 1) {
   assert.strictEqual(loaded.strongRules[0].rule_id, "custom_rule");
   assert(Array.isArray(loaded.blockPolicy.signals), "v1 rules should receive bundled block-policy defaults");
   assert(loaded.planner.light.max_lines > 0);
+  assert.strictEqual(
+    loaded.planner.merge_adjacent_low_value.enabled,
+    true,
+    "v1 rules should inherit the bundled learned merge without being overwritten"
+  );
   assert(loaded.commandPolicy.compatibility_patterns.includes("^custom$"));
   assert.strictEqual(fs.readFileSync(customPath, "utf8"), before, "compatibility fallback must not overwrite user rules");
 }
@@ -328,6 +392,47 @@ function block(lines, startLine = 1) {
   const elapsed = Date.now() - started;
   assert(blocks.length > 0);
   assert(elapsed < 5000, `50k-line split should remain linear-time in practice (elapsed=${elapsed}ms)`);
+}
+
+{
+  const manyLightBlocks = [];
+  for (let index = 0; index < 10000; index += 1) {
+    manyLightBlocks.push({
+      block: {
+        ...block([`ordinary ${index}`], index * 2 + 1),
+        kind: index % 2 ? "log" : "plain",
+      },
+      tier: "light",
+      reasons: [],
+    });
+    if (index < 9999) {
+      manyLightBlocks.push({
+        block: {
+          startLine: index * 2 + 2,
+          endLine: index * 2 + 2,
+          lines: [""],
+          separator: true,
+          kind: "separator",
+        },
+        tier: "aggressive",
+        reasons: [],
+      });
+    }
+  }
+  const started = Date.now();
+  const planned = planCompression(manyLightBlocks, {
+    config: {
+      merge_adjacent_low_value: {
+        enabled: true,
+        max_separator_lines: 2,
+        tiers: ["light"],
+      },
+    },
+    rules: [],
+  });
+  const elapsed = Date.now() - started;
+  assert.strictEqual(planned.blocks.length, 1);
+  assert(elapsed < 5000, `10k-block merge should remain linear-time in practice (elapsed=${elapsed}ms)`);
 }
 
 console.log("pipeline tests passed");

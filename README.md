@@ -152,7 +152,10 @@ The v3 default rule file contains:
 - `weak_rules`: longer TACO-inspired learned rules distilled from offline traces.
   They keep head/tail plus important lines. The release runtime does not do
   online learning.
-- `planner`: separate light and aggressive static retention strategies. Existing
+- `planner`: separate light and aggressive static retention strategies. Adjacent
+  light blocks may be joined across at most two blank lines before retention is
+  planned; this setting was selected on 336 real TerminalBench tool results,
+  with the third repeat held out. Preserve blocks are never eligible. Existing
   v1/v2 user rule files inherit built-in block defaults and are not overwritten.
 
 Raw fallback reads are also whitelisted. Commands that read the configured raw

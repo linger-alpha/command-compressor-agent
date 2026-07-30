@@ -124,6 +124,13 @@
       "keep_first_n": 4,
       "keep_last_n": 8,
       "max_lines": 40
+    },
+    "merge_adjacent_low_value": {
+      "enabled": true,
+      "max_separator_lines": 2,
+      "tiers": [
+        "light"
+      ]
     }
   },
   "visual_diagnostic_passthrough": {
