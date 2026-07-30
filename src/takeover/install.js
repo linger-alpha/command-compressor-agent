@@ -97,7 +97,7 @@ function installJsonHook(agent, options = {}) {
     changed,
     needsTrust: agent === "codex",
     warning: agent === "codex"
-      ? "Codex PostToolUse replacement is not model-visible in code mode; use this integration only with a verified function-tool-mode Codex setup."
+      ? "Codex shows replaced output as blocked feedback. CCA tells the model the command already ran; review the hook in /hooks before first use."
       : null,
   };
 }
@@ -291,11 +291,9 @@ function detectAgent(agent, options = {}) {
   }
   const installed = isAgentInstalled(agent, options);
   const replacementSupport = agent === "codex"
-    ? "function-tool-mode-only"
+    ? "supported-via-block-feedback"
     : "supported";
-  const integrationSupported = Boolean(executable) &&
-    hooksSupported &&
-    agent !== "codex";
+  const integrationSupported = Boolean(executable) && hooksSupported;
   return {
     agent,
     detected: Boolean(executable),
@@ -306,9 +304,7 @@ function detectAgent(agent, options = {}) {
     path: targetPath(agent, options.scope || "global", options),
     hookSupport,
     replacementSupport,
-    supportBlocker: agent === "codex" && executable && hooksSupported
-      ? "PostToolUse replacements are ignored by current Codex code mode."
-      : null,
+    supportBlocker: null,
     needsTrust: agent === "codex" && installed,
     trustStatus: agent === "codex" && installed ? "review-required-or-unknown" : "not-applicable",
   };

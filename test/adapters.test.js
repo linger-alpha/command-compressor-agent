@@ -7,6 +7,7 @@ const {
   observationFromClaude,
 } = require("../src/takeover/claude-code");
 const {
+  CODEX_BLOCK_PREFIX,
   handleCodexPostToolUse,
   observationFromCodex,
 } = require("../src/takeover/codex");
@@ -81,7 +82,12 @@ function options(changed, observations) {
     toolName: "Bash",
   });
   const changed = handleCodexPostToolUse(payload, options(true, []));
-  assert.deepStrictEqual(changed, { continue: false, stopReason: "[compressed output]" });
+  assert.deepStrictEqual(changed, {
+    decision: "block",
+    reason: `${CODEX_BLOCK_PREFIX}[compressed output]`,
+  });
+  assert.match(changed.reason, /command already ran/i);
+  assert.match(changed.reason, /read raw_ref instead of rerunning/i);
   assert.deepStrictEqual(handleCodexPostToolUse(payload, options(false, [])), {});
   assert.throws(
     () => handleCodexPostToolUse(payload, { config: {}, record: false, compress() { throw new Error("boom"); } }),

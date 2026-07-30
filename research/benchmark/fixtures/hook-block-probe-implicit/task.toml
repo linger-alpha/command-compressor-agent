@@ -1,0 +1,21 @@
+schema_version = "1.1"
+artifacts = []
+
+[task]
+name = "cca/hook-block-probe-implicit"
+description = "Tests whether a model understands compressed PostToolUse block feedback without an explanation."
+keywords = ["hooks", "compression", "block-feedback"]
+
+[agent]
+timeout_sec = 300.0
+
+[verifier]
+timeout_sec = 60.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 4096
+allow_internet = true
+mcp_servers = []

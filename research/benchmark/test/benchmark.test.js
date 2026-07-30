@@ -219,6 +219,52 @@ function successfulResult(inputTokens, hookObservations) {
     assert.strictEqual(currentPatch.continue, false);
     assert.match(currentPatch.stopReason, /compressed output/);
     assert.strictEqual(readJsonLines(observationsPath).length, 3);
+    const blockPatch = handlePayload({
+      tool_name: "Bash",
+      tool_input: { command: "python -m pip install demo" },
+      tool_response: {
+        stdout: Array.from(
+          { length: 80 },
+          (_, index) => `Downloading demo ${index + 1}% 1MB/s`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+    }, {
+      CCA_BENCHMARK_ARM: "current",
+      CCA_CODEX_FEEDBACK_MODE: "block",
+      CCA_OBSERVATIONS_PATH: observationsPath,
+      CCA_CONFIG_PATH: runtimeConfigPath,
+      CCA_RUNTIME_ROOT: path.resolve(__dirname, "..", "..", ".."),
+    });
+    assert.strictEqual(blockPatch.decision, "block");
+    assert.match(blockPatch.reason, /compressed output/);
+    assert.match(blockPatch.reason, /fallback raw_ref/);
+    assert.strictEqual(blockPatch.continue, undefined);
+    assert.strictEqual(readJsonLines(observationsPath).length, 4);
+    const explainedBlockPatch = handlePayload({
+      tool_name: "Bash",
+      tool_input: { command: "python -m pip install demo" },
+      tool_response: {
+        stdout: Array.from(
+          { length: 80 },
+          (_, index) => `Downloading demo ${index + 1}% 1MB/s`
+        ).join("\n"),
+        stderr: "",
+        exit_code: 0,
+      },
+    }, {
+      CCA_BENCHMARK_ARM: "current",
+      CCA_CODEX_FEEDBACK_MODE: "block-explained",
+      CCA_OBSERVATIONS_PATH: observationsPath,
+      CCA_CONFIG_PATH: runtimeConfigPath,
+      CCA_RUNTIME_ROOT: path.resolve(__dirname, "..", "..", ".."),
+    });
+    assert.strictEqual(explainedBlockPatch.decision, "block");
+    assert.match(explainedBlockPatch.reason, /^The command already ran;/);
+    assert.match(explainedBlockPatch.reason, /read raw_ref instead of rerunning/);
+    assert.match(explainedBlockPatch.reason, /fallback raw_ref/);
+    assert.strictEqual(readJsonLines(observationsPath).length, 5);
 
     const trialDir = path.join(retryRoot, "trial");
     const sessionDir = path.join(trialDir, "agent", "sessions", "2026", "07");
@@ -277,11 +323,28 @@ function successfulResult(inputTokens, hookObservations) {
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
     suffix: "fixture",
   });
-  assert.strictEqual(probeConfig.job_name, "cca-codex-hook-probe-current-fixture");
+  assert.strictEqual(
+    probeConfig.job_name,
+    "cca-codex-hook-probe-current-replacement-hook-probe-fixture"
+  );
   assert.strictEqual(probeConfig.n_concurrent_trials, 1);
   assert.match(
     probeConfig.agents[0].kwargs.current_commit,
     /^[a-f0-9]{40}$/
+  );
+  const blockProbeConfig = buildProbeConfig({
+    repoRoot: path.resolve(__dirname, "..", "..", ".."),
+    feedbackMode: "block-explained",
+    fixture: "hook-block-probe-explained",
+    suffix: "fixture",
+  });
+  assert.strictEqual(
+    blockProbeConfig.agents[0].kwargs.feedback_mode,
+    "block-explained"
+  );
+  assert.match(
+    blockProbeConfig.tasks[0].path,
+    /hook-block-probe-explained$/
   );
 
   const results = new Map();

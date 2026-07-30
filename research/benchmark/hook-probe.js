@@ -13,11 +13,23 @@ const {
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const ARMS = new Set(["none", "legacy", "current"]);
+const FEEDBACK_MODES = new Set(["replacement", "block", "block-explained"]);
+const FIXTURES = new Set([
+  "hook-probe",
+  "hook-block-probe-implicit",
+  "hook-block-probe-explained",
+]);
 
 function buildProbeConfig(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || REPO_ROOT);
   const arm = String(options.arm || "current");
   if (!ARMS.has(arm)) throw new Error(`Unknown probe arm: ${arm}`);
+  const feedbackMode = String(options.feedbackMode || "replacement");
+  if (!FEEDBACK_MODES.has(feedbackMode)) {
+    throw new Error(`Unknown Codex feedback mode: ${feedbackMode}`);
+  }
+  const fixture = String(options.fixture || "hook-probe");
+  if (!FIXTURES.has(fixture)) throw new Error(`Unknown hook probe fixture: ${fixture}`);
   const currentCommit = childProcess.execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -25,7 +37,8 @@ function buildProbeConfig(options = {}) {
   }).trim();
   const suffix = String(options.suffix || Date.now());
   return {
-    job_name: options.jobName || `cca-codex-hook-probe-${arm}-${suffix}`,
+    job_name: options.jobName ||
+      `cca-codex-hook-probe-${arm}-${feedbackMode}-${fixture}-${suffix}`,
     jobs_dir: path.resolve(
       options.jobsDir || path.join(repoRoot, "research", "jobs", "hook-probe")
     ),
@@ -47,10 +60,11 @@ function buildProbeConfig(options = {}) {
         baseline_commit: "7830b17",
         current_commit: currentCommit,
         reasoning_effort: "max",
+        feedback_mode: feedbackMode,
       },
     }],
     tasks: [{
-      path: path.join(repoRoot, "research", "benchmark", "fixtures", "hook-probe"),
+      path: path.join(repoRoot, "research", "benchmark", "fixtures", fixture),
     }],
   };
 }
@@ -137,6 +151,8 @@ function main(argv = process.argv.slice(2)) {
   if (command === "config") {
     const config = buildProbeConfig({
       arm: flags.arm,
+      feedbackMode: flags["feedback-mode"],
+      fixture: flags.fixture,
       jobsDir: flags["jobs-dir"],
       jobName: flags["job-name"],
     });
@@ -154,7 +170,7 @@ function main(argv = process.argv.slice(2)) {
     "Codex model-visible hook probe (repository-only)",
     "",
     "Usage:",
-    "  node research/benchmark/hook-probe.js config --arm current --out CONFIG.json",
+    "  node research/benchmark/hook-probe.js config --arm current [--feedback-mode replacement|block|block-explained] [--fixture FIXTURE] --out CONFIG.json",
     "  node research/benchmark/hook-probe.js report --job-dir JOB_DIR",
     "",
   ].join("\n"));

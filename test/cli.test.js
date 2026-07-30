@@ -81,10 +81,10 @@ async function capture(fn) {
     const auto = await capture(() => main(["init", "--project", "--config", path.join(autoDir, "cca.json"), "--json"]));
     assert.strictEqual(auto.code, 0);
     const initialized = JSON.parse(auto.out);
-    assert.deepStrictEqual(Object.keys(initialized.agents).sort(), ["claude-code", "opencode", "pi"]);
-    assert.strictEqual(initialized.detected.codex.supported, false);
-    assert.strictEqual(initialized.detected.codex.replacementSupport, "function-tool-mode-only");
-    assert(!fs.existsSync(path.join(autoDir, ".codex", "hooks.json")));
+    assert.deepStrictEqual(Object.keys(initialized.agents).sort(), ["claude-code", "codex", "opencode", "pi"]);
+    assert.strictEqual(initialized.detected.codex.supported, true);
+    assert.strictEqual(initialized.detected.codex.replacementSupport, "supported-via-block-feedback");
+    assert(fs.existsSync(path.join(autoDir, ".codex", "hooks.json")));
     assert(fs.existsSync(path.join(autoDir, ".opencode", "plugins", "command-compressor-agent.js")));
     assert(fs.existsSync(path.join(autoDir, ".pi", "extensions", "command-compressor-agent.ts")));
     const explicitCodex = await capture(() => main([
@@ -98,7 +98,7 @@ async function capture(fn) {
     assert.strictEqual(explicitCodex.code, 0);
     assert.match(
       JSON.parse(explicitCodex.out).agents.codex.warning,
-      /not model-visible in code mode/i
+      /blocked feedback/i
     );
     assert(fs.existsSync(path.join(autoDir, ".codex", "hooks.json")));
   } finally {

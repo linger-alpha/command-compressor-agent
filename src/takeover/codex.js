@@ -8,6 +8,12 @@ const {
   readStdin,
 } = require("./common");
 
+const CODEX_BLOCK_PREFIX = [
+  "The command already ran; Codex marks this result as blocked only because its output was replaced.",
+  "Below is compressed output. If required information is missing, read raw_ref instead of rerunning the command.",
+  "",
+].join("\n");
+
 function observationFromCodex(payload) {
   const response = normalizedResponse(payload.tool_response);
   return normalizedObservation({
@@ -23,8 +29,8 @@ function handleCodexPostToolUse(payload, options = {}) {
   const result = compressForAdapter(observation, options);
   if (!result.changed) return {};
   return {
-    continue: false,
-    stopReason: result.text,
+    decision: "block",
+    reason: `${CODEX_BLOCK_PREFIX}${result.text}`,
   };
 }
 
@@ -39,6 +45,7 @@ async function runCodexHook() {
 }
 
 module.exports = {
+  CODEX_BLOCK_PREFIX,
   handleCodexPostToolUse,
   observationFromCodex,
   runCodexHook,

@@ -156,13 +156,13 @@ const init = run(process.execPath, [
 ]);
 const initResult = JSON.parse(init.stdout);
 assert.equal(initResult.status, "installed");
-for (const agent of ["claude-code", "opencode", "pi"]) {
+for (const agent of ["claude-code", "codex", "opencode", "pi"]) {
   assert.equal(initResult.agents[agent].status, "installed", `${agent} was not installed`);
   assert.equal(initResult.detected[agent].detected, true, `${agent} was not detected`);
 }
 assert.equal(initResult.detected.codex.detected, true, "codex was not detected");
-assert.equal(initResult.detected.codex.supported, false);
-assert.equal(initResult.detected.codex.replacementSupport, "function-tool-mode-only");
+assert.equal(initResult.detected.codex.supported, true);
+assert.equal(initResult.detected.codex.replacementSupport, "supported-via-block-feedback");
 
 const codexInstall = JSON.parse(run(process.execPath, [
   path.join(repoRoot, "bin", "cca.js"),
@@ -171,7 +171,7 @@ const codexInstall = JSON.parse(run(process.execPath, [
   "--global",
   "--json",
 ]).stdout);
-assert.match(codexInstall.agents.codex.warning, /not model-visible in code mode/i);
+assert.match(codexInstall.agents.codex.warning, /blocked feedback/i);
 
 const secondInit = JSON.parse(run(process.execPath, [
   path.join(repoRoot, "bin", "cca.js"),
@@ -270,8 +270,9 @@ const codexPatch = invokeCommandHook(codexCommand, {
   tool_input: { command: "npm install example" },
   tool_response: { output: noisy, exitCode: 0 },
 });
-assert.equal(codexPatch.continue, false);
-assertCompressed(noisy, codexPatch.stopReason, "Codex hook");
+assert.equal(codexPatch.decision, "block");
+assert.match(codexPatch.reason, /command already ran/i);
+assertCompressed(noisy, codexPatch.reason, "Codex hook");
 
 const openCodeProbeModule = path.join(root, "command-compressor-agent.mjs");
 fs.copyFileSync(paths.opencode, openCodeProbeModule);
@@ -327,8 +328,8 @@ for (const agent of ["claude-code", "codex", "opencode", "pi"]) {
   assert.equal(status.agents[agent].installed, true);
 }
 assert.equal(status.agents.codex.trustStatus, "review-required-or-unknown");
-assert.equal(status.agents.codex.supported, false);
-assert.equal(status.agents.codex.replacementSupport, "function-tool-mode-only");
+assert.equal(status.agents.codex.supported, true);
+assert.equal(status.agents.codex.replacementSupport, "supported-via-block-feedback");
 
 const metrics = fs.readFileSync(path.join(path.dirname(configPath), "gain.jsonl"), "utf8")
   .split(/\r?\n/)

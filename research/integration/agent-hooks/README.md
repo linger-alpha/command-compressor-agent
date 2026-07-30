@@ -28,9 +28,8 @@ docker run --rm \
 
 The smoke uses an empty container home and checks:
 
-- automatic detection and installation for the three fully supported CLIs;
-- Codex detection as conditionally unsupported, followed by an explicit,
-  warning-bearing Codex installation;
+- automatic detection and installation for all four supported CLIs;
+- Codex installation with an explicit blocked-feedback warning;
 - repeat-install idempotency;
 - Claude Code settings validation through `claude doctor`;
 - Codex's released hooks feature and generated command-hook response;
@@ -42,7 +41,5 @@ The smoke uses an empty container home and checks:
 - uninstall behavior without deleting Claude/Codex settings files.
 
 This smoke makes no model calls. Codex's full model → Bash → PostToolUse path
-is exercised separately by the bounded Harbor probe described in
-`research/benchmark/README.md`. That probe currently fails the model-visible
-replacement gate in Codex code mode even though installation, invocation, and
-the task itself succeed.
+is exercised separately by the bounded Harbor probes described in
+`research/benchmark/README.md`.

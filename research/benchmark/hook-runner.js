@@ -72,10 +72,37 @@ function handlePayload(payload, env = process.env) {
   const arm = String(env.CCA_BENCHMARK_ARM || "none");
   if (arm === "none") return {};
   const runtimeRoot = path.resolve(env.CCA_RUNTIME_ROOT || path.resolve(__dirname, "..", ".."));
-  const { handleCodexPostToolUse } = require(path.join(runtimeRoot, "src", "takeover", "codex.js"));
-  return handleCodexPostToolUse(payload, {
+  const {
+    CODEX_BLOCK_PREFIX,
+    handleCodexPostToolUse,
+  } = require(path.join(runtimeRoot, "src", "takeover", "codex.js"));
+  const feedback = handleCodexPostToolUse(payload, {
     configPath: env.CCA_CONFIG_PATH,
   });
+  const feedbackMode = String(env.CCA_CODEX_FEEDBACK_MODE || "replacement");
+  const reason = feedback && typeof feedback.reason === "string"
+    ? feedback.reason.startsWith(CODEX_BLOCK_PREFIX)
+      ? feedback.reason.slice(CODEX_BLOCK_PREFIX.length)
+      : feedback.reason
+    : feedback && typeof feedback.stopReason === "string"
+      ? feedback.stopReason
+      : "";
+  if (!reason.trim()) return feedback;
+  if (feedbackMode === "replacement") {
+    return {
+      continue: false,
+      stopReason: reason,
+    };
+  }
+  if (feedbackMode === "block" || feedbackMode === "block-explained") {
+    return {
+      decision: "block",
+      reason: feedbackMode === "block-explained"
+        ? `${CODEX_BLOCK_PREFIX}${reason}`
+        : reason,
+    };
+  }
+  return feedback;
 }
 
 function main() {

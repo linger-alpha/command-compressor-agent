@@ -1,6 +1,6 @@
 # Command Compressor for Agent 中文说明
 
-Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发：它将命令输出压缩视为 agent context optimization 问题，并采用离线生成、运行时静态执行的规则。当前版本完整支持 Claude Code、OpenCode 稳定版和 Pi；Codex CLI adapter 可显式安装，但当前 Codex code mode 会忽略 `PostToolUse` 的模型可见替换，因此不会被 `cca init` 自动安装。
+Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发：它将命令输出压缩视为 agent context optimization 问题，并采用离线生成、运行时静态执行的规则。当前版本支持 Claude Code、Codex CLI、OpenCode 稳定版和 Pi。
 
 注：本项目与 RTK 兼容，RTK 在于优化高频命令，CCA 是压缩长输出命令。
 
@@ -29,8 +29,7 @@ TACO 是本项目的主要参考思想，也启发了这里使用的 TerminalBen
 npm install -g @linger-alpha/cca
 ```
 
-自动检测并全局安装所有已存在且已验证完整可用的 Agent。Codex 当前会因
-code-mode 替换限制而跳过：
+自动检测并全局安装所有已存在且受支持的 Agent：
 
 ```bash
 cca init --global
@@ -45,10 +44,11 @@ cca install --opencode --global
 cca install --pi --global
 ```
 
-将 `--global` 改为 `--project` 可进行项目级安装。Codex 只能显式安装，并且
-目前仅在普通 function-tool result 路径下可替换输出；code mode 虽然会执行
-hook，却仍把原始结果交给模型。安装器会明确给出这一限制。Codex 安装后仍需
-在 `/hooks` 中人工审核信任；CCA 不会绕过这一环节。OpenCode v2 beta 暂不支持。
+将 `--global` 改为 `--project` 可进行项目级安装。Codex 安装后仍需在
+`/hooks` 中人工审核信任；CCA 不会绕过这一环节。Codex 当前通过 blocked
+`PostToolUse` feedback 在 code mode 中替换模型可见结果，因此界面会把压缩
+结果显示成 failed/blocked，虽然命令其实已经执行。CCA 会在 feedback 中用
+一句简短说明避免模型因此重复执行。OpenCode v2 beta 暂不支持。
 
 查看当前配置：
 
@@ -82,12 +82,13 @@ cca uninstall --global
 `cca` 的发布 runtime 分为三层，并且没有网络或模型调用。
 
 takeover layer 统一将四种 Agent 的工具结果归一化。Claude Code 使用
-`updatedToolOutput`；条件性 Codex adapter 使用
-`continue:false + stopReason`；OpenCode
+`updatedToolOutput`；Codex adapter 使用
+`decision:"block" + reason`；OpenCode
 稳定版修改 `tool.execute.after` 的输出；Pi 替换 `tool_result.content`，
 同时保留 `details/isError`。所有 adapter 异常时都会 fail open。真实的
-Codex 0.146.0 + Luna 探针已经确认 code mode 会忽略返回的 `stopReason`，
-所以目前不能把 Codex 算作完整支持。
+Codex 0.146.0 + Luna 探针已经确认 code mode 会忽略 `stopReason`，但
+blocked feedback 能替换模型可见结果，不会撤销已经完成的命令，并能引导
+模型在压缩遗漏目标信息时读取 `raw_ref`。
 
 compression layer 先豁免 RTK、查阅命令和 raw fallback read，再清除 ANSI，
 用线性规则把输出分成较粗的块，将每块归为 `preserve`、`light` 或
@@ -149,7 +150,7 @@ TerminalBench/TACO-style A/B 测试给出了积极信号：在排除一个 infra
 对 noisy outputs 做 command-observation 压缩，同时保持本地规则可见、可编辑。
 旧 strength 标签已不再改变运行行为。
 
-项目还需要在 TerminalBench、DeepSWE-style tasks 和其他 coding agents 上做更多重复端到端 A/B 测试，并等待或实现 Codex code mode 的可靠模型可见输出替换接口。如果你发现某个任务中压缩带来了提升、损害或明显改变 agent 轨迹，欢迎分享 trace 和规则上下文，一起把安全边界做得更清楚。
+项目还需要在 TerminalBench、DeepSWE-style tasks 和其他 coding agents 上做更多重复端到端 A/B 测试。如果你发现某个任务中压缩带来了提升、损害或明显改变 agent 轨迹，欢迎分享 trace 和规则上下文，一起把安全边界做得更清楚。
 
 ## Community
 

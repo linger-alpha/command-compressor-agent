@@ -40,7 +40,7 @@ for (const scope of ["global", "project"]) {
   for (const agent of AGENTS) {
     const first = installAgent(agent, options);
     assert.strictEqual(first.changed, true, `${agent} first install should change state`);
-    if (agent === "codex") assert.match(first.warning, /code mode/i);
+    if (agent === "codex") assert.match(first.warning, /blocked feedback/i);
     assert.strictEqual(isAgentInstalled(agent, options), true);
     const second = installAgent(agent, options);
     assert.strictEqual(second.changed, false, `${agent} install should be idempotent`);
@@ -99,10 +99,10 @@ for (const scope of ["global", "project"]) {
       homeDir,
     });
     assert.strictEqual(detected.detected, true);
-    assert.strictEqual(detected.supported, agent !== "codex");
+    assert.strictEqual(detected.supported, true);
     if (agent === "codex") {
-      assert.strictEqual(detected.replacementSupport, "function-tool-mode-only");
-      assert.match(detected.supportBlocker, /ignored.*code mode/i);
+      assert.strictEqual(detected.replacementSupport, "supported-via-block-feedback");
+      assert.strictEqual(detected.supportBlocker, null);
     }
     assert(detected.version.includes("1.0.0"));
   }

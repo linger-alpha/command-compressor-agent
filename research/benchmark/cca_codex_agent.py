@@ -19,6 +19,7 @@ from harbor.models.trial.paths import EnvironmentPaths
 
 
 ARMS = {"none", "legacy", "current"}
+FEEDBACK_MODES = {"replacement", "block", "block-explained"}
 CONTAINER_ROOT = Path("/opt/command-compressor-agent")
 
 
@@ -32,16 +33,20 @@ class CcaCodex(Codex):
         repo_root: str | None = None,
         baseline_commit: str = "7830b17",
         current_commit: str | None = None,
+        feedback_mode: str = "replacement",
         **kwargs,
     ):
         if arm not in ARMS:
             raise ValueError(f"Unknown benchmark arm: {arm}")
+        if feedback_mode not in FEEDBACK_MODES:
+            raise ValueError(f"Unknown Codex feedback mode: {feedback_mode}")
         if not repo_root:
             raise ValueError("repo_root is required for the CCA benchmark agent")
         self._cca_arm = arm
         self._cca_repo_root = Path(repo_root).expanduser().resolve()
         self._cca_baseline_commit = baseline_commit
         self._cca_current_commit = current_commit
+        self._cca_feedback_mode = feedback_mode
         super().__init__(*args, **kwargs)
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -227,38 +232,50 @@ class CcaCodex(Codex):
             f"export CCA_CONFIG_PATH='{CONTAINER_ROOT}/runtime-config.json'\n"
             f"export CCA_RUNTIME_ROOT='{CONTAINER_ROOT}'\n"
             f"export CCA_BENCHMARK_ARM='{self._cca_arm}'\n"
+            f"export CCA_CODEX_FEEDBACK_MODE='{self._cca_feedback_mode}'\n"
             f"export CCA_OBSERVATIONS_PATH='{EnvironmentPaths.agent_dir}/cca/observations.jsonl'\n"
             f"exec node '{CONTAINER_ROOT}/bin/cca-benchmark-hook.js'\n",
             encoding="utf-8",
         )
         hook_runner.chmod(0o755)
         codex_wrapper = bundle / "codex-benchmark-wrapper.sh"
-        codex_wrapper.write_text(
-            "#!/bin/bash\n"
-            'wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
-            'real_codex="$wrapper_dir/codex-cca-real"\n'
-            'if [ "${1:-}" = "exec" ]; then\n'
-            "  shift\n"
-            "  args=()\n"
-            '  while [ "$#" -gt 0 ]; do\n'
-            '    if [ "$1" = "--enable" ]; then\n'
-            '      case "${2:-}" in\n'
-            "        unified_exec|code_mode|code_mode_only)\n"
-            "          shift 2\n"
-            "          continue\n"
-            "          ;;\n"
-            "      esac\n"
-            "    fi\n"
-            '    args+=("$1")\n'
-            "    shift\n"
-            "  done\n"
-            '  exec "$real_codex" exec --dangerously-bypass-hook-trust '
-            "--disable unified_exec --disable code_mode "
-            '--disable code_mode_only "${args[@]}"\n'
-            "fi\n"
-            'exec "$real_codex" "$@"\n',
-            encoding="utf-8",
-        )
+        if self._cca_feedback_mode == "replacement":
+            wrapper = (
+                "#!/bin/bash\n"
+                'wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
+                'real_codex="$wrapper_dir/codex-cca-real"\n'
+                'if [ "${1:-}" = "exec" ]; then\n'
+                "  shift\n"
+                "  args=()\n"
+                '  while [ "$#" -gt 0 ]; do\n'
+                '    if [ "$1" = "--enable" ]; then\n'
+                '      case "${2:-}" in\n'
+                "        unified_exec|code_mode|code_mode_only)\n"
+                "          shift 2\n"
+                "          continue\n"
+                "          ;;\n"
+                "      esac\n"
+                '    args+=("$1")\n'
+                "    shift\n"
+                "  done\n"
+                '  exec "$real_codex" exec --dangerously-bypass-hook-trust '
+                "--disable unified_exec --disable code_mode "
+                '--disable code_mode_only "${args[@]}"\n'
+                "fi\n"
+                'exec "$real_codex" "$@"\n'
+            )
+        else:
+            wrapper = (
+                "#!/bin/bash\n"
+                'wrapper_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
+                'real_codex="$wrapper_dir/codex-cca-real"\n'
+                'if [ "${1:-}" = "exec" ]; then\n'
+                "  shift\n"
+                '  exec "$real_codex" exec --dangerously-bypass-hook-trust "$@"\n'
+                "fi\n"
+                'exec "$real_codex" "$@"\n'
+            )
+        codex_wrapper.write_text(wrapper, encoding="utf-8")
         codex_wrapper.chmod(0o755)
 
     def _extract_baseline(self, bundle: Path) -> None:
@@ -291,11 +308,9 @@ class CcaCodex(Codex):
                 if self._cca_arm == "current"
                 else None,
                 "strength": "xhigh" if self._cca_arm != "none" else None,
-                "unified_exec": False,
-                # This records the requested CLI override only. The rollout
-                # audit separately verifies whether the model still used code
-                # mode despite the override.
-                "requested_code_mode": False,
+                "unified_exec": self._cca_feedback_mode != "replacement",
+                "requested_code_mode": self._cca_feedback_mode != "replacement",
+                "feedback_mode": self._cca_feedback_mode,
             },
             sort_keys=True,
         )

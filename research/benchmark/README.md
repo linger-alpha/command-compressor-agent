@@ -91,10 +91,25 @@ installed, ran without crashing, and coexisted with successful tasks. They do
 not prove that compression affected the model input. Their cross-arm token
 differences are trajectory variance, not valid compression-effect estimates.
 
-The complete 90-trial dynamic experiment is intentionally paused until the
-probe's model-visible replacement check passes. Running it now would spend
-substantial compute on three nominal arms whose model-visible Tool Results are
-actually unchanged.
+On 2026-07-30, two follow-up Docker/Harbor probes tested the parser's
+`decision: "block"` path with unified exec left enabled. Codex treats this as
+an error result, but the command has already executed. Both probes passed:
+
+| Probe | Raw → compressed | Result |
+| --- | ---: | --- |
+| No semantic explanation; retained target | 978 → 91 tokens | target used, producer ran once |
+| Hook explanation; target omitted | 1,143 → 245 tokens across two replacements | `raw_ref` read, producer ran once |
+
+The rollout contained the compressed text instead of the original 120 lines.
+In the second probe, the model followed the hook's explanation, searched the
+raw file for the omitted record, and did not rerun the producer command. CCA
+therefore uses blocked feedback only when compression actually changes the
+result, and explains that the command already ran. Whitelisted, unchanged, and
+fail-open results return no block decision.
+
+The dynamic experiment can now measure real model-visible compression. The
+blocked/failed presentation remains a known Codex UI semantic cost and should
+be monitored for unnecessary retries in broader trials.
 
 ## Reproduce the hook probe
 
