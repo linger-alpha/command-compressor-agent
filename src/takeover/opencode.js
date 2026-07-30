@@ -3,12 +3,11 @@
 const { asInt, objectOrEmpty } = require("../compression/utils");
 const {
   commandFromInput,
-  compressForAdapter,
+  compressForPresentedAdapter,
   normalizedObservation,
   textContent,
 } = require("./common");
 const {
-  replacementIsSmaller,
   standardReplacementText,
 } = require("./presentation");
 
@@ -29,16 +28,12 @@ function handleOpenCodeToolAfter(input, output, options = {}) {
   if (!output || typeof output !== "object") return { changed: false };
   try {
     const observation = observationFromOpenCode(input, output);
-    const result = compressForAdapter(observation, {
-      ...options,
-      acceptReplacement(candidate) {
-        return replacementIsSmaller(
-          observation,
-          standardReplacementText(candidate)
-        );
-      },
-    });
-    if (result.changed) output.output = standardReplacementText(result);
+    const { result, replacementText } = compressForPresentedAdapter(
+      observation,
+      options,
+      standardReplacementText
+    );
+    if (result.changed) output.output = replacementText;
     return { changed: result.changed, result };
   } catch (error) {
     return {

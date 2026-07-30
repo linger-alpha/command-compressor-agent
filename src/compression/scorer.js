@@ -249,14 +249,11 @@ function finiteRatio(value, fallback) {
 }
 
 module.exports = {
-  DEFAULT_SIGNALS,
-  TIER_ORDER,
   hasDuplicatePattern,
   hasProgressPattern,
   isDenseSemanticBlock,
   isOpaqueEncodedBlock,
   isVisualStructureBlock,
-  normalizeTier,
   scoreBlock,
   scoreBlocks,
 };

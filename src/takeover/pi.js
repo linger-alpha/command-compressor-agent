@@ -3,12 +3,11 @@
 const { asInt, objectOrEmpty } = require("../compression/utils");
 const {
   commandFromInput,
-  compressForAdapter,
+  compressForPresentedAdapter,
   normalizedObservation,
   textContent,
 } = require("./common");
 const {
-  replacementIsSmaller,
   standardReplacementText,
 } = require("./presentation");
 
@@ -28,18 +27,14 @@ function handlePiToolResult(event, options = {}) {
   if (!event || String(event.toolName || "").toLowerCase() !== "bash") return undefined;
   try {
     const observation = observationFromPi(event);
-    const result = compressForAdapter(observation, {
-      ...options,
-      acceptReplacement(candidate) {
-        return replacementIsSmaller(
-          observation,
-          standardReplacementText(candidate)
-        );
-      },
-    });
+    const { result, replacementText } = compressForPresentedAdapter(
+      observation,
+      options,
+      standardReplacementText
+    );
     if (!result.changed) return undefined;
     return {
-      content: [{ type: "text", text: standardReplacementText(result) }],
+      content: [{ type: "text", text: replacementText }],
     };
   } catch {
     return undefined;

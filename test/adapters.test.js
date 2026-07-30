@@ -20,7 +20,11 @@ const {
   observationFromPi,
 } = require("../src/takeover/pi");
 const {
+  MIN_REPLACEMENT_RAW_TOKENS,
+  MIN_REPLACEMENT_SAVED_TOKENS,
+  MIN_REPLACEMENT_SAVINGS_RATIO,
   STANDARD_REPLACEMENT_PREFIX,
+  replacementIsWorthwhile,
 } = require("../src/takeover/presentation");
 
 function result(changed) {
@@ -34,6 +38,36 @@ function result(changed) {
     ruleIds: ["test"],
     rawRef: "/tmp/raw.log",
   };
+}
+
+{
+  assert.strictEqual(MIN_REPLACEMENT_RAW_TOKENS, 256);
+  assert.strictEqual(MIN_REPLACEMENT_SAVED_TOKENS, 64);
+  assert.strictEqual(MIN_REPLACEMENT_SAVINGS_RATIO, 0.15);
+  const observation = (tokens) => ({
+    stdout: "x".repeat(tokens * 4),
+    stderr: "",
+  });
+  const replacement = (tokens) => "y".repeat(tokens * 4);
+  assert.strictEqual(
+    replacementIsWorthwhile(observation(255), replacement(1)),
+    false,
+    "short output must remain direct even when highly compressible"
+  );
+  assert.strictEqual(
+    replacementIsWorthwhile(observation(400), replacement(340)),
+    false,
+    "saving fewer than 64 tokens is not worthwhile"
+  );
+  assert.strictEqual(
+    replacementIsWorthwhile(observation(1000), replacement(900)),
+    false,
+    "saving less than 15% is not worthwhile"
+  );
+  assert.strictEqual(
+    replacementIsWorthwhile(observation(400), replacement(320)),
+    true
+  );
 }
 
 function options(changed, observations) {

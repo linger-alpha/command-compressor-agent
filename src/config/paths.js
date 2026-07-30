@@ -146,21 +146,12 @@ function ensureUserConfig(options = {}) {
 }
 
 module.exports = {
-  bundledRulesPath,
-  defaultBaseDir,
   defaultClaudeSettingsPath,
   defaultCodexHooksPath,
-  defaultConfig,
   defaultConfigPath,
-  defaultMetricsPath,
   defaultOpenCodePluginPath,
   defaultPiExtensionPath,
-  defaultRawDir,
-  defaultRulesPath,
   ensureUserConfig,
   loadConfig,
-  packageRoot,
   saveConfig,
-  userDir,
-  writeJson,
 };

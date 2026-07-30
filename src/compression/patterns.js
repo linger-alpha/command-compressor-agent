@@ -89,11 +89,6 @@ const RAW_FALLBACK_COMMAND_PATTERNS = [
   "\\bCOMMAND_COMPRESSOR_RAW_DIR\\b",
 ];
 
-const CONSERVATIVE_PASSTHROUGH_COMMAND_PATTERNS = [
-  "^\\s*(xxd|hexdump|od|strings|base64)\\b",
-  "^\\s*(sqlite3|duckdb)\\b.*\\s(\\.dump|\\.recover|\\.schema)\\b",
-];
-
 const REDACTION_PATTERNS = [
   [/(api[_-]?key|token|secret|password|passwd|authorization)(\s*[:=]\s*)([^\s'"`]+)/gi, "$1$2[REDACTED]"],
   [/bearer\s+[a-z0-9._~+/=-]{20,}/gi, "Bearer [REDACTED]"],
@@ -109,7 +104,6 @@ const REDACTION_PATTERNS = [
 
 module.exports = {
   ANSI_RE,
-  CONSERVATIVE_PASSTHROUGH_COMMAND_PATTERNS,
   CRITICAL_PATTERNS,
   KEEP_PATTERNS,
   LONG_COMMAND_HEAD,

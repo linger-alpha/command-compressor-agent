@@ -2,7 +2,7 @@
 
 const {
   commandFromInput,
-  compressForAdapter,
+  compressForPresentedAdapter,
   normalizedObservation,
   normalizedResponse,
   readStdin,
@@ -10,7 +10,6 @@ const {
 const {
   CODEX_BLOCK_PREFIX,
   codexReplacementText,
-  replacementIsSmaller,
 } = require("./presentation");
 
 function observationFromCodex(payload) {
@@ -25,19 +24,15 @@ function observationFromCodex(payload) {
 
 function handleCodexPostToolUse(payload, options = {}) {
   const observation = observationFromCodex(payload);
-  const result = compressForAdapter(observation, {
-    ...options,
-    acceptReplacement(candidate) {
-      return replacementIsSmaller(
-        observation,
-        codexReplacementText(candidate)
-      );
-    },
-  });
+  const { result, replacementText } = compressForPresentedAdapter(
+    observation,
+    options,
+    codexReplacementText
+  );
   if (!result.changed) return {};
   return {
     decision: "block",
-    reason: codexReplacementText(result),
+    reason: replacementText,
   };
 }
 

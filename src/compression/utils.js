@@ -65,14 +65,6 @@ function uniqueTail(values, limit) {
   return unique.reverse();
 }
 
-function firstString(...values) {
-  for (const value of values) {
-    if (typeof value === "string") return value;
-    if (value != null) return String(value);
-  }
-  return "";
-}
-
 function asInt(...values) {
   for (const value of values) {
     if (value == null) continue;
@@ -95,7 +87,6 @@ module.exports = {
   asInt,
   commandSummary,
   estimateTokens,
-  firstString,
   matchesAny,
   numberOr,
   objectOrEmpty,

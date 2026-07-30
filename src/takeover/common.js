@@ -4,6 +4,7 @@ const { compressObservation } = require("../compression/compressor");
 const { loadConfig } = require("../config/paths");
 const { recordCompressionEvent } = require("../evaluation/store");
 const { asInt, objectOrEmpty } = require("../compression/utils");
+const { replacementIsWorthwhile } = require("./presentation");
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -86,9 +87,25 @@ function compressForAdapter(observation, options = {}) {
   return result;
 }
 
+function compressForPresentedAdapter(observation, options, present) {
+  let replacementText = "";
+  const result = compressForAdapter(observation, {
+    ...options,
+    acceptReplacement(candidate) {
+      replacementText = present(candidate);
+      return replacementIsWorthwhile(observation, replacementText);
+    },
+  });
+  return {
+    result,
+    replacementText: result.changed ? replacementText : "",
+  };
+}
+
 module.exports = {
   commandFromInput,
   compressForAdapter,
+  compressForPresentedAdapter,
   normalizedObservation,
   normalizedResponse,
   readStdin,

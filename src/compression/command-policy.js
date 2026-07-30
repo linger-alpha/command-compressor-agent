@@ -76,20 +76,6 @@ function isRawFallbackRead(command, rawDir) {
   return Boolean(rawDir && command.includes(String(rawDir)));
 }
 
-function stripSafeDirectoryPrefix(command) {
-  let text = String(command || "").trim();
-  for (let count = 0; count < 4; count += 1) {
-    const match = text.match(/^(?:cd|pushd)\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*&&\s*/);
-    if (!match) break;
-    text = text.slice(match[0].length);
-  }
-  return text;
-}
-
-function isSafeReadOnlyShape(command) {
-  return isReadOnlyCommand(command, DEFAULT_READ_ONLY_PATTERNS);
-}
-
 function isReadOnlyCommand(command, patterns = DEFAULT_READ_ONLY_PATTERNS) {
   let text = String(command || "").trim();
   if (!text) return false;
@@ -307,13 +293,6 @@ module.exports = {
   DEFAULT_READ_ONLY_PATTERNS,
   DEFAULT_RTK_PATTERNS,
   commandPassthroughReason,
-  decodeSingleShellWord,
   isRawFallbackRead,
   isReadOnlyCommand,
-  isSafeReadOnlyShape,
-  hasUnsafeExpansionOrRedirect,
-  splitShellSegments,
-  stripSafeDirectoryPrefix,
-  unwrapInspectionRunner,
-  unwrapShellCommand,
 };

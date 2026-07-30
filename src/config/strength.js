@@ -25,10 +25,6 @@ function normalizeStrength(value) {
   return "default";
 }
 
-function resolveStrengthProfile(value) {
-  return STRENGTH_PROFILES[normalizeStrength(value)];
-}
-
 function listStrengthProfiles() {
   return Object.values(STRENGTH_PROFILES);
 }
@@ -37,5 +33,4 @@ module.exports = {
   STRENGTH_PROFILES,
   listStrengthProfiles,
   normalizeStrength,
-  resolveStrengthProfile,
 };

@@ -66,10 +66,6 @@ function appendFolded(folded, line, count) {
   else for (let i = 0; i < count; i += 1) folded.push(line);
 }
 
-function appliedRuleIds(rules, fallback) {
-  return ["ansi_strip", fallback, "repeat_fold", ...rules.map((rule) => String(rule.rule_id || ""))].filter(Boolean);
-}
-
 function buildResult(text, rawRef, raw, ruleIds, critical, changed, strength = "default") {
   return {
     text,
@@ -86,7 +82,6 @@ function buildResult(text, rawRef, raw, ruleIds, critical, changed, strength = "
 }
 
 module.exports = {
-  appliedRuleIds,
   buildResult,
   foldRepeats,
   formatRaw,

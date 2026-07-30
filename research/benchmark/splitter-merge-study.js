@@ -16,7 +16,10 @@ const {
 } = require("../../src/compression/scorer");
 const { splitBlocks } = require("../../src/compression/splitter");
 const { estimateTokens } = require("../../src/compression/utils");
-const { codexReplacementText } = require("../../src/takeover/presentation");
+const {
+  codexReplacementText,
+  replacementIsWorthwhile,
+} = require("../../src/takeover/presentation");
 const { criticalLinesForOutput } = require("../lib/block-policy");
 const {
   observationCorporaFromJobs,
@@ -420,8 +423,9 @@ function codexVisibleFacts(observation, result) {
     .join("\n");
   const rawTokens = estimateTokens(originalOutput);
   if (!result.changed) return { tokens: rawTokens, changed: false };
-  const replacementTokens = estimateTokens(codexReplacementText(result));
-  return replacementTokens < rawTokens
+  const replacementText = codexReplacementText(result);
+  const replacementTokens = estimateTokens(replacementText);
+  return replacementIsWorthwhile(observation, replacementText)
     ? { tokens: replacementTokens, changed: true }
     : { tokens: rawTokens, changed: false };
 }

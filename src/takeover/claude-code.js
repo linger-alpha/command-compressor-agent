@@ -3,13 +3,12 @@
 const { objectOrEmpty } = require("../compression/utils");
 const {
   commandFromInput,
-  compressForAdapter,
+  compressForPresentedAdapter,
   normalizedObservation,
   normalizedResponse,
   readStdin,
 } = require("./common");
 const {
-  replacementIsSmaller,
   standardReplacementText,
 } = require("./presentation");
 
@@ -25,15 +24,11 @@ function observationFromClaude(payload) {
 
 function handleClaudePostToolUse(payload, options = {}) {
   const observation = observationFromClaude(payload);
-  const result = compressForAdapter(observation, {
-    ...options,
-    acceptReplacement(candidate) {
-      return replacementIsSmaller(
-        observation,
-        standardReplacementText(candidate)
-      );
-    },
-  });
+  const { result, replacementText } = compressForPresentedAdapter(
+    observation,
+    options,
+    standardReplacementText
+  );
 
   const hookOutput = {
     hookEventName: "PostToolUse",
@@ -41,7 +36,7 @@ function handleClaudePostToolUse(payload, options = {}) {
   if (result.changed) {
     const toolResponse = objectOrEmpty(payload.tool_response);
     hookOutput.updatedToolOutput = {
-      stdout: standardReplacementText(result),
+      stdout: replacementText,
       stderr: "",
       interrupted: Boolean(toolResponse.interrupted),
       isImage: Boolean(toolResponse.isImage),
@@ -69,6 +64,5 @@ async function runClaudeHook() {
 module.exports = {
   handleClaudePostToolUse,
   observationFromClaude,
-  readStdin,
   runClaudeHook,
 };

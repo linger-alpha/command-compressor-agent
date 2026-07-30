@@ -311,8 +311,5 @@ function normalizeStrategy(config, fallback) {
 }
 
 module.exports = {
-  DEFAULT_PLANNER,
-  coalesceScoredBlocks,
   planCompression,
-  retainLines,
 };

@@ -169,10 +169,6 @@ function timestampKey(line) {
   return null;
 }
 
-function indentationClass(line) {
-  return /^[\t ]+\S/.test(line) ? "indented" : "root";
-}
-
 function repetitionSignature(line) {
   return String(line)
     .trim()
@@ -185,8 +181,6 @@ function repetitionSignature(line) {
 }
 
 module.exports = {
-  indentationClass,
   repetitionSignature,
   splitBlocks,
-  timestampKey,
 };

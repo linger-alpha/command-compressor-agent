@@ -1,11 +1,6 @@
 "use strict";
 
-const {
-  asInt,
-  estimateTokens,
-  firstString,
-  objectOrEmpty,
-} = require("./utils");
+const { estimateTokens } = require("./utils");
 const {
   isCritical,
 } = require("./classifiers");
@@ -22,31 +17,6 @@ const { scoreBlocks } = require("./scorer");
 const { planCompression } = require("./planner");
 const { commandPassthroughReason } = require("./command-policy");
 const { normalizeStrength } = require("../config/strength");
-
-function handleClaudePostToolUse(payload, options = {}) {
-  const observation = observationFromPayload(payload);
-  const result = compressObservation(observation, options);
-  const hookOutput = { hookEventName: "PostToolUse" };
-  if (result.changed) {
-    const toolResponse = objectOrEmpty(payload.tool_response);
-    hookOutput.updatedToolOutput = {
-      stdout: result.text,
-      stderr: "",
-      interrupted: Boolean(toolResponse.interrupted),
-      isImage: Boolean(toolResponse.isImage),
-    };
-  }
-  return { hookSpecificOutput: hookOutput };
-}
-
-function failOpen(message) {
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PostToolUse",
-      additionalContext: `command-compressor fail-open: ${message}`,
-    },
-  };
-}
 
 function compressObservation(observation, options = {}) {
   const ruleSet = loadRuleSet(options.rulesPath);
@@ -91,33 +61,6 @@ function passthroughResult(raw, rawRef, reason, critical, strength) {
   return buildResult(raw, rawRef, raw, reason.rules, critical, false, strength);
 }
 
-function observationFromPayload(payload) {
-  const toolInput = objectOrEmpty(payload.tool_input || payload.input);
-  const toolResponse = payload.tool_response || payload.output || {};
-  let stdout = "";
-  let stderr = "";
-  let exitCode = null;
-  if (toolResponse && typeof toolResponse === "object" && !Array.isArray(toolResponse)) {
-    stdout = firstString(toolResponse.stdout, toolResponse.output, toolResponse.content, "");
-    stderr = firstString(toolResponse.stderr, "");
-    exitCode = asInt(toolResponse.exit_code, toolResponse.exitCode, toolResponse.status);
-  } else {
-    stdout = firstString(toolResponse, "");
-  }
-  if (!stdout && !stderr && typeof payload.tool_output === "string") stdout = payload.tool_output;
-  return {
-    command: firstString(toolInput.command, payload.command, ""),
-    stdout,
-    stderr,
-    exitCode,
-    agent: "claude-code",
-    toolName: firstString(payload.tool_name, "Bash"),
-  };
-}
-
 module.exports = {
   compressObservation,
-  failOpen,
-  handleClaudePostToolUse,
-  observationFromPayload,
 };
