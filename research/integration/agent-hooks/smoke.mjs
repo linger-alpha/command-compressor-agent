@@ -204,7 +204,13 @@ for (const pathname of Object.values(paths)) {
 const claudeDoctor = run("claude", ["doctor"], { timeout: 90_000 });
 assert.match(
   `${claudeDoctor.stdout}\n${claudeDoctor.stderr}`,
-  /No installation issues found\./
+  /Search:\s+OK/
+);
+assert(
+  !/command-compressor.*(?:error|failed)|failed to load.*command-compressor/i.test(
+    `${claudeDoctor.stdout}\n${claudeDoctor.stderr}`
+  ),
+  `Claude Code reported a CCA hook error\n${claudeDoctor.stdout}\n${claudeDoctor.stderr}`
 );
 const openCodeStartup = run("opencode", [
   "--print-logs",
@@ -321,7 +327,8 @@ assert.equal(
   "OpenCode replaced a short Tool Result"
 );
 
-const piPackageRoot = "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist";
+const piExecutable = run("which", ["pi"]).stdout.trim();
+const piPackageRoot = path.dirname(fs.realpathSync(piExecutable));
 const { createExtensionRuntime, loadExtensions } = await import(
   pathToFileURL(path.join(piPackageRoot, "core", "extensions", "loader.js")).href
 );
