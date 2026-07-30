@@ -5,6 +5,7 @@ This module is repository-only. It is never shipped in the npm package.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -50,7 +51,14 @@ class CcaCodex(Codex):
         super().__init__(*args, **kwargs)
 
     async def install(self, environment: BaseEnvironment) -> None:
-        await super().install(environment)
+        for attempt in range(3):
+            try:
+                await super().install(environment)
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2**attempt)
         await self.exec_as_root(
             environment,
             command=(
