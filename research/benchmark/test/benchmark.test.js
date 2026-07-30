@@ -125,6 +125,7 @@ function successfulResult(inputTokens, hookObservations) {
   assert.strictEqual(config.n_concurrent_trials, 1);
   assert.strictEqual(config.agents[0].model_name, "gpt-5.6-luna");
   assert.strictEqual(config.agents[0].kwargs.reasoning_effort, "max");
+  assert.strictEqual(config.agents[0].kwargs.feedback_mode, "block-explained");
   assert.strictEqual(config.agents[0].kwargs.current_commit, first.current_commit);
   assert.strictEqual(config.datasets[0].name, "terminal-bench/terminal-bench-2-1");
   assert.strictEqual(config.datasets[0].ref, "latest");
@@ -147,8 +148,9 @@ function successfulResult(inputTokens, hookObservations) {
       cca_arm_metadata: {
         arm: "current",
         current_commit: first.current_commit,
-        unified_exec: false,
-        requested_code_mode: false,
+        unified_exec: true,
+        requested_code_mode: true,
+        feedback_mode: "block-explained",
       },
     },
     first
@@ -159,12 +161,26 @@ function successfulResult(inputTokens, hookObservations) {
       cca_arm_metadata: {
         arm: "current",
         current_commit: "0".repeat(40),
-        unified_exec: false,
-        requested_code_mode: false,
+        unified_exec: true,
+        requested_code_mode: true,
+        feedback_mode: "block-explained",
       },
     },
     first
     ).matches, false);
+  assert.strictEqual(resultMatchesManifest(
+    { arm: "current" },
+    {
+      cca_arm_metadata: {
+        arm: "current",
+        current_commit: first.current_commit,
+        unified_exec: false,
+        requested_code_mode: false,
+        feedback_mode: "replacement",
+      },
+    },
+    first
+  ).reason, "codex-feedback-mode-mismatch");
   assert.strictEqual(captureMatchesManifest(
     { arm: "none" },
     { cca_arm_metadata: { arm: "none" } },

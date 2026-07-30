@@ -20,7 +20,7 @@ const TASKS = [
   "code-from-image",
   "count-dataset-tokens",
 ];
-const EXPERIMENT_ID = "terminal-bench-2.1-10x3-static-v1";
+const EXPERIMENT_ID = "terminal-bench-2.1-10x3-block-v1";
 const ARMS = ["none", "legacy", "current"];
 const ARM_LABELS = {
   none: "no-compression",
@@ -29,6 +29,8 @@ const ARM_LABELS = {
 };
 const DEFAULT_SEED = 20260729;
 const DEFAULT_REPEATS = 3;
+const DEFAULT_CODEX_FEEDBACK_MODE = "block-explained";
+const CODEX_FEEDBACK_MODES = new Set(["replacement", "block", "block-explained"]);
 
 async function main(argv = process.argv.slice(2)) {
   const command = argv[0] || "help";
@@ -54,6 +56,7 @@ async function main(argv = process.argv.slice(2)) {
       repoRoot: REPO_ROOT,
       baselineCommit: manifest.baseline_commit,
       currentCommit: manifest.current_commit,
+      feedbackMode: manifest.codex_feedback_mode,
     }));
     return 0;
   }
@@ -121,11 +124,12 @@ function createManifest(options = {}) {
     trial.order = index + 1;
   });
   return {
-    schema_version: 3,
+    schema_version: 4,
     experiment_id: EXPERIMENT_ID,
     dataset: "terminal-bench/terminal-bench-2-1@latest",
     model: "gpt-5.6-luna",
     reasoning_effort: "max",
+    codex_feedback_mode: DEFAULT_CODEX_FEEDBACK_MODE,
     baseline_commit: "7830b17",
     current_commit: currentCommit,
     seed,
@@ -164,6 +168,7 @@ function makeJobConfig(trial, options = {}) {
         baseline_commit: options.baselineCommit || "7830b17",
         current_commit: options.currentCommit || currentRepoCommit(repoRoot),
         reasoning_effort: "max",
+        feedback_mode: options.feedbackMode || DEFAULT_CODEX_FEEDBACK_MODE,
       },
     }],
     datasets: [{
@@ -224,6 +229,7 @@ function runManifest(planPath, flags = {}) {
       repoRoot: REPO_ROOT,
       baselineCommit: manifest.baseline_commit,
       currentCommit: manifest.current_commit,
+      feedbackMode: manifest.codex_feedback_mode,
     });
     const priorAttempt = previous ? numberOr(previous.attempt, 1) : 0;
     const attempt = priorAttempt + 1;
@@ -691,7 +697,19 @@ function resultMatchesManifest(trial, result, manifest) {
   const runtimeCompatibility = captureMatchesManifest(trial, result, manifest);
   if (!runtimeCompatibility.matches) return runtimeCompatibility;
   const metadata = result && result.cca_arm_metadata;
-  if (Number(manifest.schema_version || 0) >= 3) {
+  if (Number(manifest.schema_version || 0) >= 4) {
+    const expectedFeedbackMode = String(manifest.codex_feedback_mode || "");
+    if (metadata.feedback_mode !== expectedFeedbackMode) {
+      return { matches: false, reason: "codex-feedback-mode-mismatch" };
+    }
+    const expectsCodeMode = expectedFeedbackMode !== "replacement";
+    if (metadata.unified_exec !== expectsCodeMode) {
+      return { matches: false, reason: "unified-exec-mode-mismatch" };
+    }
+    if (metadata.requested_code_mode !== expectsCodeMode) {
+      return { matches: false, reason: "code-mode-request-mismatch" };
+    }
+  } else if (Number(manifest.schema_version || 0) >= 3) {
     if (metadata.unified_exec !== false) {
       return { matches: false, reason: "unified-exec-must-be-disabled" };
     }
@@ -804,6 +822,12 @@ function validateManifest(manifest) {
     throw new Error(`Expected ${expected} trials, found ${manifest.trials.length}`);
   }
   if (manifest.concurrency !== 1) throw new Error("Benchmark concurrency must remain 1");
+  if (
+    Number(manifest.schema_version || 0) >= 4 &&
+    !CODEX_FEEDBACK_MODES.has(String(manifest.codex_feedback_mode || ""))
+  ) {
+    throw new Error("Benchmark manifest must pin codex_feedback_mode");
+  }
 }
 
 function shuffle(items, seed) {
@@ -940,6 +964,7 @@ module.exports = {
   ARMS,
   ARM_LABELS,
   DEFAULT_SEED,
+  DEFAULT_CODEX_FEEDBACK_MODE,
   EXPERIMENT_ID,
   TASKS,
   createManifest,

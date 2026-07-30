@@ -16,7 +16,10 @@ The release experiment is fixed at:
   production runtime pinned by commit;
 - three repeats per task and arm, for 90 dynamic trials;
 - Codex CLI with `gpt-5.6-luna`, `max` reasoning, seed `20260729`, and one
-  trial at a time.
+  trial at a time;
+- Codex feedback pinned to `decision: "block"` with the production explanation
+  (`block-explained`), so changed results are model-visible. Default Codex code
+  mode remains enabled.
 
 Every arm records all Bash Tool Results. The primary fixed-input corpus is
 formed only from no-compression trajectories, then the exact same records are
