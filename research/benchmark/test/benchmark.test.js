@@ -413,6 +413,16 @@ function successfulResult(inputTokens, hookObservations) {
     blockProbeConfig.tasks[0].path,
     /hook-block-probe-explained$/
   );
+  const splitterProbeConfig = buildProbeConfig({
+    repoRoot: path.resolve(__dirname, "..", "..", ".."),
+    feedbackMode: "block-explained",
+    fixture: "hook-splitter-merge-probe",
+    suffix: "fixture",
+  });
+  assert.match(
+    splitterProbeConfig.tasks[0].path,
+    /hook-splitter-merge-probe$/
+  );
 
   const results = new Map();
   for (const trial of first.trials) {

@@ -1,0 +1,19 @@
+#!/bin/sh
+
+runs=0
+if [ -f /app/hook-splitter-runs ]; then
+  runs=$(cat /app/hook-splitter-runs)
+fi
+printf '%s\n' "$((runs + 1))" > /app/hook-splitter-runs
+
+section=1
+while [ "$section" -le 80 ]; do
+  printf 'section=%02d component=worker status=ordinary\n' "$section"
+  if [ "$section" -eq 41 ]; then
+    printf 'detail section=%02d merge_code=SABLE-3141\n' "$section"
+  else
+    printf 'detail section=%02d payload=ordinary-value-%02d\n' "$section" "$section"
+  fi
+  printf '\n'
+  section=$((section + 1))
+done

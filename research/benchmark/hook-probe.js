@@ -18,6 +18,7 @@ const FIXTURES = new Set([
   "hook-probe",
   "hook-block-probe-implicit",
   "hook-block-probe-explained",
+  "hook-splitter-merge-probe",
 ]);
 
 function buildProbeConfig(options = {}) {
