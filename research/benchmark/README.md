@@ -16,9 +16,8 @@ The prerelease experiment compares no compression with the commit-pinned
   coverage, log analysis, web-server configuration, binary inspection, image
   reconstruction, and dataset accounting;
 - two arms: no compression and the current prerelease runtime pinned by commit;
-- four repeats per task and arm, for 80 sequential dynamic trials;
-- Codex CLI with `gpt-5.6-luna`, `max` reasoning, seed `20260729`, and one
-  trial at a time;
+- four repeats per task and arm, for 80 dynamic trials;
+- Codex CLI with `gpt-5.6-luna`, `max` reasoning, and seed `20260729`;
 - Codex feedback pinned to `decision: "block"` with the production explanation
   (`block-explained`), so changed results are model-visible. Default Codex code
   mode remains enabled.
@@ -54,7 +53,12 @@ node research/benchmark/cli.js run \
 
 The runner also accepts `--arm`, `--task`, `--max-trials`, and `--force`.
 For example, `--arm none` collects only the unbiased static-replay corpus.
-State is persisted after every sequential trial under `research/jobs/`.
+State is persisted after every trial under `research/jobs/`. The runner accepts
+`--concurrency 1-4`; the completed rc.1 experiment ran its first 37 valid
+trials sequentially and the remainder with two workers.
+
+The completed result and post-experiment rc.2 fixes are documented in
+[`tb21-10x4-rc1-analysis.md`](tb21-10x4-rc1-analysis.md).
 
 ## Earlier 10 × 3 development experiment
 
