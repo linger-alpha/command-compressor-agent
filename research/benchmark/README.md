@@ -100,16 +100,19 @@ an error result, but the command has already executed. Both probes passed:
 | No semantic explanation; retained target | 978 → 91 tokens | target used, producer ran once |
 | Hook explanation; target omitted from compressed output | 1,143 → 245 tokens across two replacements | task passed, but target was visible in command source |
 | Production adapter wording; target omitted from compressed output | 1,075 → 174 tokens across two replacements | task passed, but target was visible in command source |
+| Corrected black-box producer; production adapter | 919 → 85 tokens for the changed result | `raw_ref` read, producer ran once, reward 1 |
 
 The rollout contained the compressed text instead of the original 120 lines.
 One run followed the hook's explanation and searched the raw file, but the
 original fixture also exposed the target literal in the command source. That
 fixture is retained as model-visible replacement evidence but rejected as
 conclusive fallback evidence. The corrected fixture uses a container-provided
-producer whose target is absent from the instruction and command. CCA uses
-blocked feedback only when compression actually changes the result, and
-explains that the command already ran. Whitelisted, unchanged, and fail-open
-results return no block decision.
+producer whose target is absent from the instruction and command. The corrected
+probe passed: its rollout shows one `block-producer` call, one subsequent
+`sed` read of the supplied raw path, and the recovered target. CCA uses blocked
+feedback only when compression actually changes the result, and explains that
+the command already ran. Whitelisted, unchanged, and fail-open results return
+no block decision.
 
 The production replay also exposed a one-word follow-up result that the core
 had classified as changed because its raw archive includes the command text.
