@@ -37,6 +37,7 @@ The smoke uses an empty container home and checks:
   `tool.execute.after` output shape;
 - Pi's published extension loader and `ExtensionRunner.emitToolResult`;
 - actual compression of a bounded repetitive output for every adapter;
+- direct passthrough of a short but compressible result without Agent guidance;
 - preservation of OpenCode metadata and Pi `details`/`isError`;
 - uninstall behavior without deleting Claude/Codex settings files.
 

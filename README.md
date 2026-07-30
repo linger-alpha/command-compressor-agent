@@ -26,7 +26,7 @@ Claude Code hook that favors stability.
 The current runtime therefore prioritizes recoverability and block-level safety:
 
 - use post-tool replacement instead of command rewriting,
-- compress only when the result is shorter,
+- replace only when the complete Agent-visible result is materially shorter,
 - keep a `raw_ref` fallback,
 - preserve encoded, visual, dense-semantic, traceback, and failure blocks,
 - exempt RTK and inspection/read commands,
@@ -66,8 +66,10 @@ trust step during a normal install. Codex currently exposes model-visible
 replacement in code mode through blocked `PostToolUse` feedback, so its UI
 labels a compressed result as failed/blocked even though the command already
 ran. CCA includes a short explanation in that feedback to prevent unnecessary
-reruns, and does not block when the complete feedback would be no shorter than
-the actual stdout/stderr. OpenCode v2 beta is not supported by this release.
+reruns. All four adapters return the original Tool Result directly when it is
+shorter than 256 estimated tokens, or when the complete replacement would save
+fewer than 64 estimated tokens or 15% of the original output. OpenCode v2 beta
+is not supported by this release.
 
 Check the current configuration:
 
@@ -110,7 +112,9 @@ preserving `details` and `isError`. Every adapter normalizes to the same
 `{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
 an exception. Adapter-owned presentation tells the model that CCA compressed
 the output and recommends searching the local `raw_ref` instead of rerunning
-the command. Real Codex 0.146.0 + Luna probes confirmed that `stopReason` is
+the command. This explanation is only added after the common 256-token,
+64-token, and 15% visible-savings gate passes, so small Tool Results do not pay
+for compression metadata. Real Codex 0.146.0 + Luna probes confirmed that `stopReason` is
 ignored in code mode, while blocked feedback replaces the model-visible result,
 does not undo the already completed command, and supports `raw_ref` fallback.
 

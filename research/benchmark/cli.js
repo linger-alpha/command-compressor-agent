@@ -857,6 +857,29 @@ function validateManifest(manifest) {
   if (manifest.trials.length !== expected) {
     throw new Error(`Expected ${expected} trials, found ${manifest.trials.length}`);
   }
+  const expectedIds = new Set();
+  for (const task of manifest.tasks) {
+    for (let repeat = 1; repeat <= Number(manifest.repeats); repeat += 1) {
+      for (const arm of activeArms) {
+        expectedIds.add(`${task}--${arm}--r${repeat}`);
+      }
+    }
+  }
+  const observedIds = new Set();
+  for (const trial of manifest.trials) {
+    if (
+      !trial ||
+      !manifest.tasks.includes(trial.task) ||
+      !activeArms.includes(trial.arm) ||
+      !Number.isInteger(Number(trial.repeat)) ||
+      trial.id !== `${trial.task}--${trial.arm}--r${trial.repeat}` ||
+      !expectedIds.has(trial.id) ||
+      observedIds.has(trial.id)
+    ) {
+      throw new Error(`Invalid benchmark trial: ${trial && trial.id}`);
+    }
+    observedIds.add(trial.id);
+  }
   if (manifest.concurrency !== 1) throw new Error("Benchmark concurrency must remain 1");
   if (
     Number(manifest.schema_version || 0) >= 4 &&

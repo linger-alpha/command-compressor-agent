@@ -145,6 +145,12 @@ function successfulResult(inputTokens, hookObservations) {
     () => createManifest({ arms: ["current"] }),
     /must include none and current/
   );
+  const malformedPaired = structuredClone(paired);
+  malformedPaired.trials[0].arm = "legacy";
+  assert.throws(
+    () => summarizeTrials(malformedPaired, new Map()),
+    /Invalid benchmark trial/
+  );
   assert.notDeepStrictEqual(
     first.trials.map((trial) => trial.id),
     createManifest({ seed: 1, repeats: 3 }).trials.map((trial) => trial.id)

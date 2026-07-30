@@ -242,6 +242,10 @@ assert.match(codexFeatures.stdout, /^hooks\s+\S+\s+true\b/im);
 const noisy = Array.from({ length: 3_000 }, () =>
   "Downloading package artifact [====================] 99%"
 ).join("\n");
+const shortNoisy = Array.from(
+  { length: 20 },
+  () => "Downloading package artifact 99%"
+).join("\n");
 const configPath = initResult.config;
 
 const claudeSettings = readJson(paths.claude);
@@ -258,6 +262,15 @@ const claudePatch = invokeCommandHook(claudeCommand, claudePayload);
 const claudeOutput = claudePatch.hookSpecificOutput.updatedToolOutput.stdout;
 assertCompressed(noisy, claudeOutput, "Claude Code hook");
 assert.equal(claudePatch.hookSpecificOutput.updatedToolOutput.interrupted, false);
+const claudeShortPatch = invokeCommandHook(claudeCommand, {
+  ...claudePayload,
+  tool_response: { ...claudePayload.tool_response, stdout: shortNoisy },
+});
+assert.equal(
+  claudeShortPatch.hookSpecificOutput.updatedToolOutput,
+  undefined,
+  "Claude Code replaced a short Tool Result"
+);
 
 const codexHooks = readJson(paths.codex);
 const codexCommand = codexHooks.hooks.PostToolUse
@@ -273,6 +286,11 @@ const codexPatch = invokeCommandHook(codexCommand, {
 assert.equal(codexPatch.decision, "block");
 assert.match(codexPatch.reason, /command already ran/i);
 assertCompressed(noisy, codexPatch.reason, "Codex hook");
+assert.deepEqual(invokeCommandHook(codexCommand, {
+  tool_name: "Bash",
+  tool_input: { command: "npm install example" },
+  tool_response: { output: shortNoisy, exitCode: 0 },
+}), {}, "Codex blocked a short Tool Result");
 
 const openCodeProbeModule = path.join(root, "command-compressor-agent.mjs");
 fs.copyFileSync(paths.opencode, openCodeProbeModule);
@@ -289,6 +307,19 @@ await openCodeHooks["tool.execute.after"](
 );
 assertCompressed(noisy, openCodeOutput.output, "OpenCode plugin");
 assert.deepEqual(openCodeOutput.metadata, { exitCode: 0, sentinel: "preserved" });
+const openCodeShortOutput = {
+  output: shortNoisy,
+  metadata: { exitCode: 0, sentinel: "preserved" },
+};
+await openCodeHooks["tool.execute.after"](
+  { tool: "bash", args: { command: "npm install example" } },
+  openCodeShortOutput
+);
+assert.equal(
+  openCodeShortOutput.output,
+  shortNoisy,
+  "OpenCode replaced a short Tool Result"
+);
 
 const piPackageRoot = "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist";
 const { createExtensionRuntime, loadExtensions } = await import(
@@ -317,6 +348,16 @@ assert.equal(piErrors.length, 0, `Pi runner errors: ${JSON.stringify(piErrors)}`
 assertCompressed(noisy, piResult.content[0].text, "Pi extension");
 assert.deepEqual(piResult.details, { exitCode: 1, sentinel: "preserved" });
 assert.equal(piResult.isError, true);
+const piShortResult = await piRunner.emitToolResult({
+  type: "tool_result",
+  toolName: "bash",
+  toolCallId: "cca-smoke-short",
+  input: { command: "npm install example" },
+  content: [{ type: "text", text: shortNoisy }],
+  details: { exitCode: 0, sentinel: "preserved" },
+  isError: false,
+});
+assert.equal(piShortResult, undefined, "Pi replaced a short Tool Result");
 
 const status = JSON.parse(run(process.execPath, [
   path.join(repoRoot, "bin", "cca.js"),
@@ -389,6 +430,7 @@ process.stdout.write(`${JSON.stringify({
     codex_model_visible: "not-tested-by-this-smoke",
     opencode: "passed",
     pi: "passed",
+    short_results_direct: "passed",
   },
   preservation: {
     claude_tool_response_fields: "passed",

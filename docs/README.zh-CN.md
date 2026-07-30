@@ -13,7 +13,7 @@ TACO 是本项目的主要参考思想，也启发了这里使用的 TerminalBen
 当前 runtime 优先保证可恢复性和块级安全：
 
 - 使用各 Agent 的工具调用后置替换接口，不重写命令；
-- 只在压缩结果更短时替换输出；
+- 只在完整的 Agent 可见结果有实质净节省时替换输出；
 - 保留 `raw_ref` 作为原始输出 fallback；
 - 保留编码数据、视觉结构、密集语义、traceback 和真实失败块；
 - 豁免 RTK、查阅命令和 raw fallback read；
@@ -48,8 +48,10 @@ cca install --pi --global
 `/hooks` 中人工审核信任；CCA 不会绕过这一环节。Codex 当前通过 blocked
 `PostToolUse` feedback 在 code mode 中替换模型可见结果，因此界面会把压缩
 结果显示成 failed/blocked，虽然命令其实已经执行。CCA 会在 feedback 中用
-一句简短说明避免模型因此重复执行；如果完整 feedback 不比实际 stdout/stderr
-更短，则不会返回 block。OpenCode v2 beta 暂不支持。
+一句简短说明避免模型因此重复执行。四个 adapter 共用同一门槛：原始可见
+输出不足 256 个估算 token，或完整替换结果节省不足 64 个估算 token，或
+节省比例不足 15% 时，直接返回原始 Tool Result，不添加说明文字。
+OpenCode v2 beta 暂不支持。
 
 查看当前配置：
 
@@ -88,7 +90,8 @@ takeover layer 统一将四种 Agent 的工具结果归一化。Claude Code 使�
 稳定版修改 `tool.execute.after` 的输出；Pi 替换 `tool_result.content`，
 同时保留 `details/isError`。面向模型的说明文字归 takeover/adapter 层所有：
 它会说明输出已经被 CCA 压缩，并建议在本地搜索 `raw_ref`，不要重跑命令。
-所有 adapter 异常时都会 fail open。真实的
+这些说明只会在共同的 256-token、64-token 和 15% 可见净节省门槛全部通过
+后出现，因此短 Tool Result 不会反而增加上下文。所有 adapter 异常时都会 fail open。真实的
 Codex 0.146.0 + Luna 探针已经确认 code mode 会忽略 `stopReason`，但
 blocked feedback 能替换模型可见结果，不会撤销已经完成的命令，并能引导
 模型在压缩遗漏目标信息时读取 `raw_ref`。

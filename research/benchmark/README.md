@@ -2,28 +2,30 @@
 
 This directory is repository-only and never enters the npm package.
 
-## Fixed 10 × 3 experiment
+## 0.2.0-rc.1 paired 10 × 4 experiment
 
-The release experiment is fixed at:
+The prerelease experiment compares no compression with the commit-pinned
+`0.2.0-rc.1` runtime:
 
 - official Harbor Hub dataset
   `terminal-bench/terminal-bench-2-1@latest`;
 - ten tasks: `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`,
   `log-summary-date-ranges`, `regex-log`, `nginx-request-logging`,
   `extract-elf`, `sqlite-db-truncate`, `code-from-image`, and
-  `count-dataset-tokens`;
-- three arms: no compression, Git `7830b17` (0.1.4), and the current
-  production runtime pinned by commit;
-- three repeats per task and arm, for 90 dynamic trials;
+  `count-dataset-tokens`, spanning builds, package serving, databases,
+  coverage, log analysis, web-server configuration, binary inspection, image
+  reconstruction, and dataset accounting;
+- two arms: no compression and the current prerelease runtime pinned by commit;
+- four repeats per task and arm, for 80 sequential dynamic trials;
 - Codex CLI with `gpt-5.6-luna`, `max` reasoning, seed `20260729`, and one
   trial at a time;
 - Codex feedback pinned to `decision: "block"` with the production explanation
   (`block-explained`), so changed results are model-visible. Default Codex code
   mode remains enabled.
 
-Every arm records all Bash Tool Results. The primary fixed-input corpus is
+Both arms record all Bash Tool Results. The primary fixed-input corpus is
 formed only from no-compression trajectories, then the exact same records are
-replayed through 0.1.4 and the current compressor. The union of all three arms
+replayed through 0.1.4 and the current compressor. The union of both dynamic arms
 is reported only as a diagnostic because compression can change the Agent
 trajectory.
 
@@ -31,24 +33,35 @@ Generate the plan:
 
 ```sh
 node research/benchmark/cli.js plan \
-  --out research/artifacts/tb21-10x3-plan.json
+  --arms none,current \
+  --repeats 4 \
+  --experiment-id terminal-bench-2.1-10x4-rc1 \
+  --current-label cca-0.2.0-rc.1 \
+  --out research/artifacts/tb21-10x4-rc1-plan.json
 ```
 
 Inspect or run one trial:
 
 ```sh
 node research/benchmark/cli.js config \
-  --plan research/artifacts/tb21-10x3-plan.json \
+  --plan research/artifacts/tb21-10x4-rc1-plan.json \
   --trial regex-log--current--r1
 
 node research/benchmark/cli.js run \
-  --plan research/artifacts/tb21-10x3-plan.json \
+  --plan research/artifacts/tb21-10x4-rc1-plan.json \
   --trial regex-log--current--r1
 ```
 
 The runner also accepts `--arm`, `--task`, `--max-trials`, and `--force`.
 For example, `--arm none` collects only the unbiased static-replay corpus.
 State is persisted after every sequential trial under `research/jobs/`.
+
+## Earlier 10 × 3 development experiment
+
+The earlier development plan used no compression, Git `7830b17` (0.1.4), and
+the then-current runtime, with three repeats per task and arm for 90 trials.
+Existing three-arm manifests remain valid; the same runner now reads its active
+arms from the manifest instead of hard-coding a second experiment path.
 
 ## Model-visible replacement gate
 
@@ -264,14 +277,16 @@ The dynamic report is generated with:
 
 ```sh
 node research/benchmark/cli.js report \
-  --plan research/artifacts/tb21-10x3-plan.json \
-  --out research/artifacts/tb21-10x3-report.json
+  --plan research/artifacts/tb21-10x4-rc1-plan.json \
+  --out research/artifacts/tb21-10x4-rc1-report.json
 ```
 
-It requires all 90 results, current task passes no lower than legacy and no
-more than one below no compression, matched-success input-token medians at
-least 10% below no compression and 5% below legacy, working capture and hook
-coverage, consistent task revisions, and verified model-visible replacements.
+For the paired prerelease plan it requires all 80 results, current task passes
+no more than one below no compression, matched-success input-token medians at
+least 10% below no compression, working capture and hook coverage, consistent
+task revisions, and verified model-visible replacements. A manifest that also
+contains `legacy` additionally requires current passes no lower than legacy and
+at least 5% fewer matched-success input tokens than legacy.
 
 The static report separately requires all ten tasks, non-empty critical and
 protected samples, 100% retention of both, and at least 5% fewer tokens than
