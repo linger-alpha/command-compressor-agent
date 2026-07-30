@@ -15,6 +15,8 @@ const {
   isVisualStructureBlock,
 } = require("../../src/compression/scorer");
 const { splitBlocks } = require("../../src/compression/splitter");
+const { estimateTokens } = require("../../src/compression/utils");
+const { CODEX_BLOCK_PREFIX } = require("../../src/takeover/codex");
 const { criticalLinesForOutput } = require("../lib/block-policy");
 const {
   observationCorporaFromJobs,
@@ -190,6 +192,8 @@ function recordFacts(
 ) {
   const baselineTokens = effectiveTokens(baseline);
   const candidateTokens = effectiveTokens(candidate);
+  const baselineCodex = codexVisibleFacts(observation, baseline);
+  const candidateCodex = codexVisibleFacts(observation, candidate);
   const originalLines = outputLinesFromObservation(observation);
   const criticalLines = criticalLinesForOutput(originalLines);
   const protectedBlocks = splitBlocks(originalLines, ruleSet.splitter)
@@ -202,6 +206,10 @@ function recordFacts(
     source: String(record.source || "unknown"),
     baselineTokens,
     candidateTokens,
+    baselineCodexTokens: baselineCodex.tokens,
+    candidateCodexTokens: candidateCodex.tokens,
+    baselineCodexChanged: baselineCodex.changed,
+    candidateCodexChanged: candidateCodex.changed,
     baselineBlocks: planBlockCount(baseline),
     candidateBlocks: planBlockCount(candidate),
     merged: candidate.ruleIds.includes("adjacent_low_value_merge"),
@@ -231,6 +239,10 @@ function emptyFacts() {
     records: 0,
     baselineTokens: 0,
     candidateTokens: 0,
+    baselineCodexTokens: 0,
+    candidateCodexTokens: 0,
+    baselineCodexChangedRecords: 0,
+    candidateCodexChangedRecords: 0,
     baselineBlocks: 0,
     candidateBlocks: 0,
     mergedRecords: 0,
@@ -251,6 +263,10 @@ function addFacts(target, facts) {
   target.records += 1;
   target.baselineTokens += facts.baselineTokens;
   target.candidateTokens += facts.candidateTokens;
+  target.baselineCodexTokens += facts.baselineCodexTokens;
+  target.candidateCodexTokens += facts.candidateCodexTokens;
+  target.baselineCodexChangedRecords += facts.baselineCodexChanged ? 1 : 0;
+  target.candidateCodexChangedRecords += facts.candidateCodexChanged ? 1 : 0;
   target.baselineBlocks += facts.baselineBlocks;
   target.candidateBlocks += facts.candidateBlocks;
   target.mergedRecords += facts.merged ? 1 : 0;
@@ -301,6 +317,14 @@ function finalizeFacts(value) {
       value.baselineTokens,
       value.candidateTokens
     ),
+    current_codex_visible_tokens_est: value.baselineCodexTokens,
+    candidate_codex_visible_tokens_est: value.candidateCodexTokens,
+    codex_visible_reduction_vs_current: reduction(
+      value.baselineCodexTokens,
+      value.candidateCodexTokens
+    ),
+    current_codex_visible_changed_records: value.baselineCodexChangedRecords,
+    candidate_codex_visible_changed_records: value.candidateCodexChangedRecords,
     current_plan_blocks: value.baselineBlocks,
     candidate_plan_blocks: value.candidateBlocks,
     plan_block_reduction: reduction(
@@ -390,6 +414,18 @@ function effectiveTokens(result) {
   return result.changed ? result.compressedTokensEst : result.rawTokensEst;
 }
 
+function codexVisibleFacts(observation, result) {
+  const originalOutput = [observation.stdout, observation.stderr]
+    .filter(Boolean)
+    .join("\n");
+  const rawTokens = estimateTokens(originalOutput);
+  if (!result.changed) return { tokens: rawTokens, changed: false };
+  const replacementTokens = estimateTokens(`${CODEX_BLOCK_PREFIX}${result.text}`);
+  return replacementTokens < rawTokens
+    ? { tokens: replacementTokens, changed: true }
+    : { tokens: rawTokens, changed: false };
+}
+
 function planBlockCount(result) {
   return result.plan && Array.isArray(result.plan.blocks)
     ? result.plan.blocks.length
@@ -456,6 +492,7 @@ if (require.main === module) {
 module.exports = {
   CANDIDATES,
   buildStudy,
+  codexVisibleFacts,
   selectCandidate,
   splitForRecord,
 };

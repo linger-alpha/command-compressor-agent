@@ -9,6 +9,7 @@ const { handlePayload } = require("../hook-runner");
 const { buildProbeConfig, buildProbeReport } = require("../hook-probe");
 const { buildStaticReplayReport } = require("../static-replay");
 const {
+  codexVisibleFacts,
   selectCandidate,
   splitForRecord,
 } = require("../splitter-merge-study");
@@ -53,6 +54,21 @@ function successfulResult(inputTokens, hookObservations) {
 }
 
 (() => {
+  assert.deepStrictEqual(
+    codexVisibleFacts(
+      { stdout: "short", stderr: "" },
+      { changed: true, text: "x" }
+    ),
+    { tokens: 2, changed: false },
+    "Codex explanation overhead must cancel replacements without visible savings"
+  );
+  const visibleFacts = codexVisibleFacts(
+    { stdout: "ordinary output ".repeat(1000), stderr: "" },
+    { changed: true, text: "[compressed output]\nshort" }
+  );
+  assert.strictEqual(visibleFacts.changed, true);
+  assert(visibleFacts.tokens < 100);
+
   assert.strictEqual(splitForRecord({ repeat: 1 }), "train");
   assert.strictEqual(splitForRecord({ repeat: 2 }), "validation");
   assert.strictEqual(splitForRecord({ repeat: 3 }), "test");

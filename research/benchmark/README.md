@@ -127,6 +127,42 @@ The dynamic experiment can now measure real model-visible compression. The
 blocked/failed presentation remains a known Codex UI semantic cost and should
 be monitored for unnecessary retries in broader trials.
 
+## Adjacent light-block merge study
+
+On 2026-07-30, the repository-only splitter study replayed 336 captured Tool
+Results from the ten-task no-compression corpus. Repeat 1 was used for training,
+repeat 2 for candidate ranking, and repeat 3 was excluded until final
+acceptance. The selected rule merges only `light` blocks across at most two
+blank lines. It does not merge `aggressive` or `preserve` blocks.
+
+On the 224 general-command results, the selected rule reduced estimated core
+output tokens by 13.76% relative to the same pipeline with merging disabled and
+reduced planned blocks from 729 to 299. Including the production Codex
+explanation and its visible-savings gate produced essentially the same 13.75%
+reduction; model-visible replacements increased from 22 to 32 records. Across
+all 336 results, including 112 read/RTK/raw-ref passthrough records, the Codex
+visible reduction was 6.47%.
+
+The replay retained 62/62 critical lines, 74/74 protected blocks, and 73/73
+encoded blocks exactly, with zero passthrough violations. The held-out repeat
+reduced Codex-visible tokens by 18.81% on its 71 general-command results.
+
+A dedicated Docker probe then generated 80 adjacent light blocks separated by
+blank lines. The learned rule changed the result from 1,793 to 298 estimated
+tokens. The omitted middle value was absent from the compressed rollout. Codex
+read the supplied `raw_ref` once, did not rerun the producer, recovered the
+value, and passed with reward 1.
+
+The first three real `extract-elf` repeats are encouraging but not a release
+conclusion: current passed 3/3, 0.1.4 passed 3/3, and no compression passed 2/3.
+All eight current replacements were model-visible; none of the replaced
+commands were rerun. On the two matched successful repeats, current used 33.71%
+fewer input tokens than no compression but 100.11% more than 0.1.4. The legacy
+runs happened to take much shorter trajectories while producing only one
+replacement, so this cross-arm token gap is trajectory variance rather than
+evidence that legacy compression is stronger. At this checkpoint only 11 of 90
+planned dynamic trials have completed.
+
 ## Reproduce the hook probe
 
 Generate an absolute, commit-pinned Harbor config:
