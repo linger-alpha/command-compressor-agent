@@ -145,6 +145,11 @@ function successfulResult(inputTokens, hookObservations) {
     () => createManifest({ arms: ["current"] }),
     /must include none and current/
   );
+  assert.strictEqual(createManifest({ concurrency: 2 }).concurrency, 2);
+  assert.throws(
+    () => createManifest({ concurrency: 5 }),
+    /between 1 and 4/
+  );
   const malformedPaired = structuredClone(paired);
   malformedPaired.trials[0].arm = "legacy";
   assert.throws(

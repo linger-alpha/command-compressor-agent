@@ -41,6 +41,7 @@ async function main(argv = process.argv.slice(2)) {
     const manifest = createManifest({
       seed: numberFlag(flags.seed, DEFAULT_SEED),
       repeats: numberFlag(flags.repeats, DEFAULT_REPEATS),
+      concurrency: numberFlag(flags.concurrency, 1),
       arms: flags.arms ? String(flags.arms).split(",") : ARMS,
       experimentId: flags["experiment-id"] || EXPERIMENT_ID,
       currentLabel: flags["current-label"],
@@ -112,6 +113,7 @@ async function main(argv = process.argv.slice(2)) {
 function createManifest(options = {}) {
   const seed = Number(options.seed == null ? DEFAULT_SEED : options.seed);
   const repeats = Number(options.repeats == null ? DEFAULT_REPEATS : options.repeats);
+  const concurrency = Number(options.concurrency == null ? 1 : options.concurrency);
   const currentCommit = String(options.currentCommit || currentRepoCommit(REPO_ROOT));
   const arms = normalizeArms(options.arms);
   const armLabels = {
@@ -121,6 +123,9 @@ function createManifest(options = {}) {
   const experimentId = String(options.experimentId || EXPERIMENT_ID);
   if (!Number.isInteger(seed) || seed < 0) throw new Error("seed must be a non-negative integer");
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error("repeats must be a positive integer");
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) {
+    throw new Error("concurrency must be an integer between 1 and 4");
+  }
   const trials = [];
   for (const task of TASKS) {
     for (let repeat = 1; repeat <= repeats; repeat += 1) {
@@ -150,7 +155,7 @@ function createManifest(options = {}) {
     current_commit: currentCommit,
     seed,
     repeats,
-    concurrency: 1,
+    concurrency,
     tasks: [...TASKS],
     arms: arms.map((arm) => ({ id: arm, label: armLabels[arm] })),
     trials,
@@ -195,7 +200,7 @@ function makeJobConfig(trial, options = {}) {
   };
 }
 
-function runManifest(planPath, flags = {}) {
+async function runManifest(planPath, flags = {}) {
   const manifest = readJson(planPath);
   validateManifest(manifest);
   const activeArms = manifestArmIds(manifest);
@@ -216,6 +221,19 @@ function runManifest(planPath, flags = {}) {
   const selectedTrial = flags.trial ? String(flags.trial) : null;
   const selectedArm = flags.arm ? String(flags.arm) : null;
   const selectedTask = flags.task ? String(flags.task) : null;
+  const concurrency = numberFlag(flags.concurrency, manifest.concurrency || 1);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) {
+    throw new Error("--concurrency must be an integer between 1 and 4");
+  }
+  state.concurrency = concurrency;
+  state.concurrency_history = Array.isArray(state.concurrency_history)
+    ? state.concurrency_history
+    : [];
+  state.concurrency_history.push({
+    started_at: new Date().toISOString(),
+    concurrency,
+  });
+  writeJson(statePath, state);
   if (selectedTrial && !manifest.trials.some((trial) => trial.id === selectedTrial)) {
     throw new Error(`Unknown trial id: ${selectedTrial}`);
   }
@@ -225,7 +243,7 @@ function runManifest(planPath, flags = {}) {
   if (selectedTask && !manifest.tasks.includes(selectedTask)) {
     throw new Error(`Unknown task: ${selectedTask}`);
   }
-  let attempted = 0;
+  const pending = [];
   for (const trial of manifest.trials) {
     if (selectedTrial && trial.id !== selectedTrial) continue;
     if (selectedArm && trial.arm !== selectedArm) continue;
@@ -240,52 +258,76 @@ function runManifest(planPath, flags = {}) {
     ) {
       continue;
     }
-    if (attempted >= maxTrials) break;
-    const config = makeJobConfig(trial, {
-      jobsDir,
-      repoRoot: REPO_ROOT,
-      baselineCommit: manifest.baseline_commit,
-      currentCommit: manifest.current_commit,
-      feedbackMode: manifest.codex_feedback_mode,
-    });
-    const priorAttempt = previous ? numberOr(previous.attempt, 1) : 0;
-    const attempt = priorAttempt + 1;
-    config.job_name = retryJobName(trial, attempt);
-    const configPath = path.join(configDir, `${String(trial.order).padStart(2, "0")}-${trial.id}.json`);
-    writeJson(configPath, config);
-    state.trials[trial.id] = {
-      status: "running",
-      order: trial.order,
-      attempt,
-      job_name: config.job_name,
-      config: configPath,
-      started_at: new Date().toISOString(),
-    };
-    writeJson(statePath, state);
-    const pythonPath = [REPO_ROOT, harborSource, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
-    const result = childProcess.spawnSync(python, [launcher, "run", "--config", configPath], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, PYTHONPATH: pythonPath },
-      encoding: "utf8",
-      stdio: "inherit",
-      shell: false,
-    });
-    const processExitCode = result.error || !Number.isInteger(result.status) ? 1 : result.status;
-    const jobSucceeded = processExitCode === 0 &&
-      harborJobSucceeded(path.join(jobsDir, config.job_name));
-    const exitCode = processExitCode || (jobSucceeded ? 0 : 2);
-    state.trials[trial.id] = {
-      ...state.trials[trial.id],
-      status: exitCode === 0 ? "completed" : "failed",
-      exit_code: exitCode,
-      harbor_process_exit_code: processExitCode,
-      finished_at: new Date().toISOString(),
-    };
-    writeJson(statePath, state);
-    attempted += 1;
-    if (exitCode !== 0 && !flags["continue-on-error"]) return exitCode || 1;
+    if (pending.length >= maxTrials) break;
+    pending.push(trial);
   }
-  return 0;
+
+  let nextIndex = 0;
+  let stop = false;
+  let firstFailure = 0;
+  const pythonPath = [REPO_ROOT, harborSource, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+
+  async function runNext() {
+    while (!stop) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= pending.length) return;
+      const trial = pending[index];
+      const previous = state.trials[trial.id];
+      const config = makeJobConfig(trial, {
+        jobsDir,
+        repoRoot: REPO_ROOT,
+        baselineCommit: manifest.baseline_commit,
+        currentCommit: manifest.current_commit,
+        feedbackMode: manifest.codex_feedback_mode,
+      });
+      const priorAttempt = previous ? numberOr(previous.attempt, 1) : 0;
+      const attempt = priorAttempt + 1;
+      config.job_name = retryJobName(trial, attempt);
+      const configPath = path.join(configDir, `${String(trial.order).padStart(2, "0")}-${trial.id}.json`);
+      writeJson(configPath, config);
+      state.trials[trial.id] = {
+        status: "running",
+        order: trial.order,
+        attempt,
+        job_name: config.job_name,
+        config: configPath,
+        started_at: new Date().toISOString(),
+      };
+      writeJson(statePath, state);
+      const processExitCode = await new Promise((resolve) => {
+        const child = childProcess.spawn(python, [launcher, "run", "--config", configPath], {
+          cwd: REPO_ROOT,
+          env: { ...process.env, PYTHONPATH: pythonPath },
+          stdio: "inherit",
+          shell: false,
+        });
+        child.once("error", () => resolve(1));
+        child.once("exit", (code) => resolve(Number.isInteger(code) ? code : 1));
+      });
+      const jobSucceeded = processExitCode === 0 &&
+        harborJobSucceeded(path.join(jobsDir, config.job_name));
+      const exitCode = processExitCode || (jobSucceeded ? 0 : 2);
+      state.trials[trial.id] = {
+        ...state.trials[trial.id],
+        status: exitCode === 0 ? "completed" : "failed",
+        exit_code: exitCode,
+        harbor_process_exit_code: processExitCode,
+        finished_at: new Date().toISOString(),
+      };
+      writeJson(statePath, state);
+      if (exitCode !== 0 && !flags["continue-on-error"]) {
+        firstFailure ||= exitCode || 1;
+        stop = true;
+      }
+    }
+  }
+
+  await Promise.all(Array.from(
+    { length: Math.min(concurrency, pending.length) },
+    () => runNext()
+  ));
+  return firstFailure;
 }
 
 function reportFromJobs(manifest, jobsDir) {
@@ -880,7 +922,13 @@ function validateManifest(manifest) {
     }
     observedIds.add(trial.id);
   }
-  if (manifest.concurrency !== 1) throw new Error("Benchmark concurrency must remain 1");
+  if (
+    !Number.isInteger(Number(manifest.concurrency)) ||
+    Number(manifest.concurrency) < 1 ||
+    Number(manifest.concurrency) > 4
+  ) {
+    throw new Error("Benchmark concurrency must be an integer between 1 and 4");
+  }
   if (
     Number(manifest.schema_version || 0) >= 4 &&
     !CODEX_FEEDBACK_MODES.has(String(manifest.codex_feedback_mode || ""))
@@ -1018,9 +1066,9 @@ function help() {
     "CCA Terminal-Bench 2.1 research harness (excluded from npm)",
     "",
     "Usage:",
-    "  node research/benchmark/cli.js plan [--arms none,current] [--repeats 4] [--experiment-id ID] [--out PLAN.json]",
+    "  node research/benchmark/cli.js plan [--arms none,current] [--repeats 4] [--concurrency 1-4] [--experiment-id ID] [--out PLAN.json]",
     "  node research/benchmark/cli.js config --plan PLAN --trial TRIAL_ID",
-    "  node research/benchmark/cli.js run --plan PLAN [--trial TRIAL_ID] [--arm ARM] [--task TASK] [--max-trials N] [--force]",
+    "  node research/benchmark/cli.js run --plan PLAN [--concurrency 1-4] [--trial TRIAL_ID] [--arm ARM] [--task TASK] [--max-trials N] [--force]",
     "  node research/benchmark/cli.js report --plan PLAN [--out REPORT.json]",
     "  node research/benchmark/cli.js static-report --plan PLAN [--out STATIC_REPORT.json]",
     "",
