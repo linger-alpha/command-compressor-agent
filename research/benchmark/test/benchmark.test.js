@@ -128,6 +128,23 @@ function successfulResult(inputTokens, hookObservations) {
   for (const arm of ARMS) {
     assert.strictEqual(first.trials.filter((trial) => trial.arm === arm).length, 30);
   }
+  const paired = createManifest({
+    seed: 20260729,
+    repeats: 4,
+    arms: ["none", "current"],
+    experimentId: "terminal-bench-2.1-10x4-rc1",
+    currentLabel: "cca-0.2.0-rc.1",
+  });
+  assert.strictEqual(paired.trials.length, 80);
+  assert.strictEqual(paired.experiment_id, "terminal-bench-2.1-10x4-rc1");
+  assert.deepStrictEqual(paired.arms, [
+    { id: "none", label: "no-compression" },
+    { id: "current", label: "cca-0.2.0-rc.1" },
+  ]);
+  assert.throws(
+    () => createManifest({ arms: ["current"] }),
+    /must include none and current/
+  );
   assert.notDeepStrictEqual(
     first.trials.map((trial) => trial.id),
     createManifest({ seed: 1, repeats: 3 }).trials.map((trial) => trial.id)
@@ -450,7 +467,7 @@ function successfulResult(inputTokens, hookObservations) {
   }
   const report = summarizeTrials(first, results);
   assert.strictEqual(report.release_gate.passed, true);
-  assert.strictEqual(report.matched_successful_triplets, 30);
+  assert.strictEqual(report.matched_successful_groups, 30);
   assert.strictEqual(report.by_arm.current.passed, 30);
   assert.strictEqual(report.by_arm.current.completed, 30);
   assert.strictEqual(report.by_arm.current.hook_local_reduction, 0.25);
@@ -464,6 +481,25 @@ function successfulResult(inputTokens, hookObservations) {
   assert.strictEqual(report.release_gate.checks.compression_replacements_exercised, true);
   assert(report.input_token_reduction.current_vs_none >= 0.1);
   assert(report.input_token_reduction.current_vs_legacy >= 0.05);
+
+  const pairedResults = new Map();
+  for (const trial of paired.trials) {
+    const tokens = trial.arm === "none" ? 1000 : 800;
+    pairedResults.set(
+      trial.id,
+      successfulResult(tokens, trial.arm === "none" ? 0 : 2)
+    );
+  }
+  const pairedReport = summarizeTrials(paired, pairedResults);
+  assert.strictEqual(pairedReport.release_gate.passed, true);
+  assert.strictEqual(pairedReport.planned_trials, 80);
+  assert.strictEqual(pairedReport.matched_successful_groups, 40);
+  assert.deepStrictEqual(Object.keys(pairedReport.by_arm), ["none", "current"]);
+  assert.strictEqual(
+    pairedReport.release_gate.checks.current_passes_at_least_legacy,
+    undefined
+  );
+  assert.strictEqual(pairedReport.input_token_reduction.current_vs_legacy, undefined);
 
   const missingTrial = first.trials[0];
   results.delete(missingTrial.id);
@@ -483,11 +519,11 @@ function successfulResult(inputTokens, hookObservations) {
   const erroredReport = summarizeTrials(first, erroredButRewarded);
   assert.strictEqual(trialCompleted(erroredButRewarded.get(completedTrial.id)), false);
   assert.strictEqual(
-    erroredReport.matched_successful_triplets,
+    erroredReport.matched_successful_groups,
     28,
     "the earlier deleted trial and the errored reward must not enter matched token metrics"
   );
-  assert.strictEqual(erroredReport.matched_reward_triplets_excluded_by_exception, 1);
+  assert.strictEqual(erroredReport.matched_reward_groups_excluded_by_exception, 1);
 
   const repeatedProgress = Array.from(
     { length: 80 },

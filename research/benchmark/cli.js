@@ -22,6 +22,7 @@ const TASKS = [
 ];
 const EXPERIMENT_ID = "terminal-bench-2.1-10x3-block-v1";
 const ARMS = ["none", "legacy", "current"];
+const SUPPORTED_ARMS = new Set(ARMS);
 const ARM_LABELS = {
   none: "no-compression",
   legacy: "cca-0.1.4-7830b17",
@@ -40,10 +41,19 @@ async function main(argv = process.argv.slice(2)) {
     const manifest = createManifest({
       seed: numberFlag(flags.seed, DEFAULT_SEED),
       repeats: numberFlag(flags.repeats, DEFAULT_REPEATS),
+      arms: flags.arms ? String(flags.arms).split(",") : ARMS,
+      experimentId: flags["experiment-id"] || EXPERIMENT_ID,
+      currentLabel: flags["current-label"],
     });
     const outPath = path.resolve(flags.out || path.join(REPO_ROOT, "research", "artifacts", "tb21-10x3-plan.json"));
     writeJson(outPath, manifest);
-    print({ out: outPath, trials: manifest.trials.length, seed: manifest.seed });
+    print({
+      out: outPath,
+      experiment_id: manifest.experiment_id,
+      arms: manifest.arms.map((arm) => arm.id),
+      trials: manifest.trials.length,
+      seed: manifest.seed,
+    });
     return 0;
   }
   if (command === "config") {
@@ -103,17 +113,23 @@ function createManifest(options = {}) {
   const seed = Number(options.seed == null ? DEFAULT_SEED : options.seed);
   const repeats = Number(options.repeats == null ? DEFAULT_REPEATS : options.repeats);
   const currentCommit = String(options.currentCommit || currentRepoCommit(REPO_ROOT));
+  const arms = normalizeArms(options.arms);
+  const armLabels = {
+    ...ARM_LABELS,
+    ...(options.currentLabel ? { current: String(options.currentLabel) } : {}),
+  };
+  const experimentId = String(options.experimentId || EXPERIMENT_ID);
   if (!Number.isInteger(seed) || seed < 0) throw new Error("seed must be a non-negative integer");
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error("repeats must be a positive integer");
   const trials = [];
   for (const task of TASKS) {
     for (let repeat = 1; repeat <= repeats; repeat += 1) {
-      for (const arm of ARMS) {
+      for (const arm of arms) {
         trials.push({
           id: `${task}--${arm}--r${repeat}`,
           task,
           arm,
-          arm_label: ARM_LABELS[arm],
+          arm_label: armLabels[arm],
           repeat,
         });
       }
@@ -125,7 +141,7 @@ function createManifest(options = {}) {
   });
   return {
     schema_version: 4,
-    experiment_id: EXPERIMENT_ID,
+    experiment_id: experimentId,
     dataset: "terminal-bench/terminal-bench-2-1@latest",
     model: "gpt-5.6-luna",
     reasoning_effort: "max",
@@ -136,7 +152,7 @@ function createManifest(options = {}) {
     repeats,
     concurrency: 1,
     tasks: [...TASKS],
-    arms: ARMS.map((arm) => ({ id: arm, label: ARM_LABELS[arm] })),
+    arms: arms.map((arm) => ({ id: arm, label: armLabels[arm] })),
     trials,
   };
 }
@@ -182,6 +198,7 @@ function makeJobConfig(trial, options = {}) {
 function runManifest(planPath, flags = {}) {
   const manifest = readJson(planPath);
   validateManifest(manifest);
+  const activeArms = manifestArmIds(manifest);
   const jobsDir = path.resolve(flags["jobs-dir"] || defaultJobsDir(manifest.experiment_id));
   const configDir = path.join(jobsDir, "configs");
   const statePath = path.resolve(flags.state || path.join(jobsDir, "run-state.json"));
@@ -202,7 +219,7 @@ function runManifest(planPath, flags = {}) {
   if (selectedTrial && !manifest.trials.some((trial) => trial.id === selectedTrial)) {
     throw new Error(`Unknown trial id: ${selectedTrial}`);
   }
-  if (selectedArm && !ARMS.includes(selectedArm)) {
+  if (selectedArm && !activeArms.includes(selectedArm)) {
     throw new Error(`Unknown arm: ${selectedArm}`);
   }
   if (selectedTask && !manifest.tasks.includes(selectedTask)) {
@@ -300,8 +317,15 @@ function reportFromJobs(manifest, jobsDir) {
 
 function summarizeTrials(manifest, results) {
   validateManifest(manifest);
-  const byArm = Object.fromEntries(ARMS.map((arm) => [arm, {
-    label: ARM_LABELS[arm],
+  const activeArms = manifestArmIds(manifest);
+  const compressedArms = activeArms.filter((arm) => arm !== "none");
+  const armLabels = Object.fromEntries(
+    manifest.arms.map((arm) => typeof arm === "string"
+      ? [arm, ARM_LABELS[arm]]
+      : [arm.id, arm.label || ARM_LABELS[arm.id]])
+  );
+  const byArm = Object.fromEntries(activeArms.map((arm) => [arm, {
+    label: armLabels[arm],
     planned: manifest.trials.filter((trial) => trial.arm === arm).length,
     results: 0,
     errors: 0,
@@ -382,33 +406,37 @@ function summarizeTrials(manifest, results) {
   let matchedExcludedByException = 0;
   for (const task of manifest.tasks) {
     for (let repeat = 1; repeat <= manifest.repeats; repeat += 1) {
-      const group = Object.fromEntries(ARMS.map((arm) => {
+      const group = Object.fromEntries(activeArms.map((arm) => {
         const id = `${task}--${arm}--r${repeat}`;
         return [arm, results.get(id)];
       }));
-      if (!ARMS.every((arm) => group[arm] && trialPassed(group[arm]))) continue;
-      if (!ARMS.every((arm) => trialCompleted(group[arm]))) {
+      if (!activeArms.every((arm) => group[arm] && trialPassed(group[arm]))) continue;
+      if (!activeArms.every((arm) => trialCompleted(group[arm]))) {
         matchedExcludedByException += 1;
         continue;
       }
-      const tokens = Object.fromEntries(ARMS.map((arm) => [
+      const tokens = Object.fromEntries(activeArms.map((arm) => [
         arm,
         Number(group[arm].agent_result && group[arm].agent_result.n_input_tokens),
       ]));
-      if (!ARMS.every((arm) => Number.isFinite(tokens[arm]) && tokens[arm] > 0)) continue;
+      if (!activeArms.every((arm) => Number.isFinite(tokens[arm]) && tokens[arm] > 0)) {
+        continue;
+      }
       matched.push({ task, repeat, tokens });
     }
   }
-  const matchedMedians = Object.fromEntries(ARMS.map((arm) => [
+  const matchedMedians = Object.fromEntries(activeArms.map((arm) => [
     arm,
     median(matched.map((entry) => entry.tokens[arm])),
   ]));
   const reductionVsNone = reduction(matchedMedians.none, matchedMedians.current);
-  const reductionVsLegacy = reduction(matchedMedians.legacy, matchedMedians.current);
+  const reductionVsLegacy = activeArms.includes("legacy")
+    ? reduction(matchedMedians.legacy, matchedMedians.current)
+    : null;
   const allResultsPresent = results.size === manifest.trials.length;
-  const hooksEffective =
-    byArm.legacy.hook_trials === byArm.legacy.results &&
-    byArm.current.hook_trials === byArm.current.results;
+  const hooksEffective = compressedArms.every((arm) =>
+    byArm[arm].hook_trials === byArm[arm].results
+  );
   const captureEffective = Object.values(byArm).every((stats) =>
     stats.capture_trials === stats.results &&
     stats.capture_output_trials === stats.results
@@ -421,29 +449,38 @@ function summarizeTrials(manifest, results) {
     Object.values(taskChecksumValues).every((values) => values.length === 1);
   const replacementsVisible =
     byArm.none.model_visible_compressed_observations === 0 &&
-    ["legacy", "current"].every((arm) =>
+    compressedArms.every((arm) =>
       byArm[arm].model_visible_compressed_observations ===
       byArm[arm].hook_changed_observations
     );
-  const replacementsExercised =
-    byArm.legacy.hook_changed_observations > 0 &&
-    byArm.current.hook_changed_observations > 0;
+  const replacementsExercised = compressedArms.every((arm) =>
+    byArm[arm].hook_changed_observations > 0
+  );
   const gates = {
     all_planned_trials_present: allResultsPresent,
-    current_passes_at_least_legacy: byArm.current.passed >= byArm.legacy.passed,
     current_within_one_of_no_compression: byArm.current.passed >= byArm.none.passed - 1,
     matched_success_input_tokens_10pct_below_none:
       matched.length > 0 && reductionVsNone >= 0.1,
-    matched_success_input_tokens_5pct_below_legacy:
-      matched.length > 0 && reductionVsLegacy >= 0.05,
     compression_hooks_observed: hooksEffective,
     tool_results_captured: captureEffective,
     task_versions_consistent: taskVersionsConsistent,
     compression_replacements_exercised: replacementsExercised,
     compression_replacements_model_visible: replacementsVisible,
   };
+  if (activeArms.includes("legacy")) {
+    gates.current_passes_at_least_legacy =
+      byArm.current.passed >= byArm.legacy.passed;
+    gates.matched_success_input_tokens_5pct_below_legacy =
+      matched.length > 0 && reductionVsLegacy >= 0.05;
+  }
+  const inputTokenReduction = {
+    current_vs_none: reductionVsNone,
+  };
+  if (activeArms.includes("legacy")) {
+    inputTokenReduction.current_vs_legacy = reductionVsLegacy;
+  }
   return {
-    schema_version: 2,
+    schema_version: 3,
     experiment_id: manifest.experiment_id || null,
     dataset: manifest.dataset,
     model: manifest.model,
@@ -454,13 +491,10 @@ function summarizeTrials(manifest, results) {
     planned_trials: manifest.trials.length,
     observed_results: results.size,
     by_arm: byArm,
-    matched_successful_triplets: matched.length,
-    matched_reward_triplets_excluded_by_exception: matchedExcludedByException,
+    matched_successful_groups: matched.length,
+    matched_reward_groups_excluded_by_exception: matchedExcludedByException,
     matched_input_token_medians: matchedMedians,
-    input_token_reduction: {
-      current_vs_none: reductionVsNone,
-      current_vs_legacy: reductionVsLegacy,
-    },
+    input_token_reduction: inputTokenReduction,
     task_checksums: taskChecksumValues,
     release_gate: {
       passed: Object.values(gates).every(Boolean),
@@ -613,6 +647,7 @@ function readJsonLines(pathname) {
 
 function observationCorporaFromJobs(manifest, jobsDir) {
   validateManifest(manifest);
+  const activeArms = manifestArmIds(manifest);
   const primary = [];
   const union = [];
   const stats = {
@@ -622,7 +657,7 @@ function observationCorporaFromJobs(manifest, jobsDir) {
     clean_success_trials: 0,
     observations: 0,
     primary_observations: 0,
-    by_arm: Object.fromEntries(ARMS.map((arm) => [arm, {
+    by_arm: Object.fromEntries(activeArms.map((arm) => [arm, {
       trials_with_capture: 0,
       observations: 0,
     }])),
@@ -817,7 +852,8 @@ function validateManifest(manifest) {
   if (!Array.isArray(manifest.tasks) || !manifest.tasks.length) {
     throw new Error("Benchmark manifest must include tasks");
   }
-  const expected = manifest.tasks.length * ARMS.length * Number(manifest.repeats);
+  const activeArms = manifestArmIds(manifest);
+  const expected = manifest.tasks.length * activeArms.length * Number(manifest.repeats);
   if (manifest.trials.length !== expected) {
     throw new Error(`Expected ${expected} trials, found ${manifest.trials.length}`);
   }
@@ -828,6 +864,27 @@ function validateManifest(manifest) {
   ) {
     throw new Error("Benchmark manifest must pin codex_feedback_mode");
   }
+}
+
+function normalizeArms(value) {
+  const arms = Array.isArray(value) ? value.map(String) : [...ARMS];
+  if (!arms.length || new Set(arms).size !== arms.length) {
+    throw new Error("Benchmark arms must be a non-empty unique list");
+  }
+  for (const arm of arms) {
+    if (!SUPPORTED_ARMS.has(arm)) throw new Error(`Unsupported benchmark arm: ${arm}`);
+  }
+  if (!arms.includes("none") || !arms.includes("current")) {
+    throw new Error("Benchmark arms must include none and current");
+  }
+  return arms;
+}
+
+function manifestArmIds(manifest) {
+  const configured = Array.isArray(manifest && manifest.arms)
+    ? manifest.arms.map((arm) => typeof arm === "string" ? arm : arm && arm.id)
+    : ARMS;
+  return normalizeArms(configured);
 }
 
 function shuffle(items, seed) {
@@ -938,7 +995,7 @@ function help() {
     "CCA Terminal-Bench 2.1 research harness (excluded from npm)",
     "",
     "Usage:",
-    "  node research/benchmark/cli.js plan [--out research/artifacts/tb21-10x3-plan.json]",
+    "  node research/benchmark/cli.js plan [--arms none,current] [--repeats 4] [--experiment-id ID] [--out PLAN.json]",
     "  node research/benchmark/cli.js config --plan PLAN --trial TRIAL_ID",
     "  node research/benchmark/cli.js run --plan PLAN [--trial TRIAL_ID] [--arm ARM] [--task TASK] [--max-trials N] [--force]",
     "  node research/benchmark/cli.js report --plan PLAN [--out REPORT.json]",
