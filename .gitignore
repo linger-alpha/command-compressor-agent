@@ -8,5 +8,17 @@ coverage/
 research/artifacts/
 research/data/
 research/jobs/
+research/private/
+research/trajectories/
+research/**/captures/
+research/**/raw/
+research/**/rollouts/
+research/**/sessions/
+research/**/*.har
+research/**/*.jsonl
+research/**/*.log
+research/**/*.ndjson
+research/**/*.sqlite
+research/**/*.sqlite3
 __pycache__/
 *.pyc
