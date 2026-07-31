@@ -124,15 +124,15 @@ The rules are static JSON. Offline TACO-inspired research can propose and judge 
 
 The end-to-end input counts below are reported by Codex over the complete, changing Agent trajectory. The fixed-input tables instead use CCA's local token estimator on captured Tool Results. They answer different questions and should not be compared as if they were the same metric.
 
-### Same input: raw output vs 0.1.4 vs 0.2.0-rc.2
+### Same input: raw output vs 0.1.4 vs 0.2.0
 
-The fixed-input comparison takes all 523 Tool Results captured from the 40 no-compression trials and deterministically replays them as raw output, through CCA 0.1.4 (`7830b17`), and through the post-experiment 0.2.0-rc.2 rules. This isolates compressor behavior from Agent trajectory variation. Token counts are local estimates, not provider billing figures.
+The fixed-input comparison takes all 523 Tool Results captured from the 40 no-compression trials and deterministically replays them as raw output, through CCA 0.1.4 (`7830b17`), and through the post-experiment 0.2.0 rules finalized in rc.2. This isolates compressor behavior from Agent trajectory variation. Token counts are local estimates, not provider billing figures.
 
 | Compressor | Estimated Tool Result tokens | Reduction vs raw | Reduction vs 0.1.4 |
 | --- | ---: | ---: | ---: |
 | No compression | 398,555 | — | — |
 | CCA 0.1.4 | 373,320 | 6.33% | — |
-| CCA 0.2.0-rc.2 | 343,646 | **13.78%** | **7.95%** |
+| CCA 0.2.0 | 343,646 | **13.78%** | **7.95%** |
 
 When read-only, RTK, and fallback passthroughs are excluded, the 342 general-command results show the difference more clearly:
 
@@ -140,7 +140,7 @@ When read-only, RTK, and fallback passthroughs are excluded, the 342 general-com
 | --- | ---: | ---: | ---: |
 | No compression | 164,762 | — | — |
 | CCA 0.1.4 | 153,366 | 6.92% | — |
-| CCA 0.2.0-rc.2 | 109,853 | **33.33%** | **28.37%** |
+| CCA 0.2.0 | 109,853 | **33.33%** | **28.37%** |
 
 The rc.2 replay retained 100% of the audited critical facts and 100% of the encoded/protected blocks. This safety boundary is why CCA intentionally does not compress every large output.
 
@@ -156,7 +156,7 @@ Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max r
 
 Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while the subset eligible for compression was reduced by 22.04%.
 
-\*: Compared with no compression, CCA produced one additional success and two additional failures. One failure was diagnosed as unrelated to compression; the other exposed an issue where compressed `curl GET` output prevented the model from obtaining README information. That issue was fixed in rc.2. See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
+\*: Compared with no compression, CCA produced one additional success and two additional failures. One failure was diagnosed as unrelated to compression; the other exposed an issue where compressed `curl GET` output prevented the model from obtaining README information. That issue was fixed in 0.2.0, with the protection first introduced in rc.2. See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
 
 ## Runtime and Research Boundary
 
