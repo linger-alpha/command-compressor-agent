@@ -1,14 +1,20 @@
-# Command Compressor for Agent
-
 ![CCA compresses command output before it reaches a coding agent](docs/assets/cca-hero.png)
 
-**General command compressor that cuts every command output your Agent receives.**
+<p align="center"><strong>General command compressor that cuts every command output your Agent receives.</strong></p>
+
+<p align="center">
+  <strong>English</strong> ·
+  <a href="docs/README.zh-CN.md">简体中文</a> ·
+  <a href="docs/README.fr.md">Français</a> ·
+  <a href="docs/README.de.md">Deutsch</a> ·
+  <a href="docs/README.pt.md">Português</a>
+</p>
+
+---
 
 Command Compressor for Agent (`CCA`) saves tokens with rules instead of asking the Agent to “use fewer tokens.”
 
 CCA supports Claude Code, Codex, stable OpenCode, and Pi. It is compatible with [RTK](https://github.com/rtk-ai/rtk): RTK takes over common commands and optimizes their output, while CCA removes low-value information after a command has run.
-
-中文说明见 [docs/README.zh-CN.md](docs/README.zh-CN.md).
 
 ## 1. What CCA Does
 
