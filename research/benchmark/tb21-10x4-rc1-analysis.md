@@ -13,6 +13,29 @@ counted as task results. The first 37 valid trials ran sequentially. After
 validating bounded worker state updates, the remaining queue ran with two
 workers. No new infrastructure failure occurred under two-worker execution.
 
+## Experiment configuration
+
+| Setting | Value |
+| --- | --- |
+| Dataset | `terminal-bench/terminal-bench-2-1@latest` |
+| Tasks | `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`, `log-summary-date-ranges`, `regex-log`, `nginx-request-logging`, `extract-elf`, `sqlite-db-truncate`, `code-from-image`, `count-dataset-tokens` |
+| Agent runtime | Codex CLI through Harbor, with each task running in its isolated Docker environment |
+| Model | `gpt-5.6-luna` |
+| Reasoning effort | `max` |
+| Arms | `no-compression` and CCA 0.2.0-rc.1 (`00e82faa58d1fcba18e96b9c911df88db249d411`) |
+| Repetitions | Four per task and arm, for 80 valid trials |
+| Trial ordering | Randomized with seed `20260729`; this controls queue order, not model sampling |
+| Concurrency | First 37 valid trials at one worker; remaining 43 at two workers |
+| Infrastructure retries | Three transient apt-mirror EOF setup failures retried and excluded |
+| Task identity | Revisions checked by per-task checksums in the generated dynamic report |
+
+Dynamic model-input counts come from Codex and cover the complete Agent
+trajectory, including any change in commands or reasoning path. Hook-level and
+fixed-input counts use CCA's local token estimator and cover Tool Results only.
+The fixed-input replay uses the 523 Tool Results captured from the 40
+no-compression trials, comparing raw output, Git baseline `7830b17` (0.1.4),
+and the post-experiment rc.2 candidate rules.
+
 ## Dynamic result
 
 | Task | No compression | 0.2.0-rc.1 |
