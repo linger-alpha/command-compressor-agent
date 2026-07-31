@@ -154,8 +154,6 @@ CCA 组全部 Tool Result 的总降幅为 9.62%，其中真正允许压缩的输
 
 动态实验使用 rc.1。实验暴露的问题促成了 rc.2 对“复合源码查阅”和“仅输出到 stdout 的安全 HTTP GET”的保护。修复已经通过固定输入回放、完整回归测试、Node 18 容器测试、npm 包审计和四种 adapter 的真实安装 smoke test，但尚未用 rc.2 重新跑完整的 80 次动态实验。
 
-作为开发投入量级参考，Codex task tracker 在主要的 0.2.0 实现、排查和评估周期中记录了 **911,755 tokens**。这是开发过程消耗，不是 benchmark 输入量，也不是项目从创建至今全部成本的精确统计。
-
 完整结果、差异案例、局限和发布判断见 [Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-rc1-analysis.md)。
 
 ## 生产包与研究代码的边界
@@ -168,7 +166,7 @@ GitHub 仓库还在 `research/` 下开源了导入、脱敏、prompt、候选生
 
 ## 社区
 
-欢迎提交 issue、可复现轨迹和规则建议，尤其是压缩改变任务结果或触发不必要 fallback 的案例。
+欢迎提交 issue、可复现轨迹和规则建议，尤其是压缩改变任务结果或触发不必要 fallback 的案例，欢迎给作者提交 Agent 运行轨迹用于改进边缘情况稳定性与提高压缩性能。
 
 感谢 [LINUX DO](https://linux.do/) 社区提供交流与分享平台。
 

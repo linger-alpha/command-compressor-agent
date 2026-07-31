@@ -154,8 +154,6 @@ Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while t
 
 The dynamic run used rc.1. Its findings led to rc.2 protections for compound source inspections and safe stdout-only HTTP GET reads. Those fixes passed the same-input replay, regression suite, Node 18 container test, npm package audit, and real installation smoke tests for all four adapters; the full 80-trial dynamic matrix has not yet been repeated on rc.2.
 
-For scale, the Codex task tracker recorded **911,755 tokens** during the main 0.2.0 implementation, investigation, and evaluation cycle. This is development effort, not benchmark input usage and not a claim about lifetime project cost.
-
 See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
 
 ## Runtime and Research Boundary
@@ -168,7 +166,7 @@ The legacy strength names `low`, `default`, `high`, and `xhigh` remain accepted 
 
 ## Community
 
-Issues, reproducible traces, and rule proposals are welcome—especially cases where compression changes task success or triggers an unnecessary fallback read.
+Issues, reproducible traces, and rule proposals are welcome—especially cases where compression changes task success or triggers an unnecessary fallback read. Agent trajectories can also be submitted to the author to improve stability around edge cases and increase compression performance.
 
 Thanks to the [LINUX DO](https://linux.do/) community for providing a place to communicate and share the project.
 
