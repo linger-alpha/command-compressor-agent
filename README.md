@@ -1,5 +1,9 @@
 # Command Compressor for Agent
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png" alt="CCA compresses command output before it reaches a coding agent" width="720">
+</p>
+
 Command Compressor for Agent (`CCA`) saves tokens with rules instead of asking the Agent to “use fewer tokens.”
 
 CCA supports Claude Code, Codex, stable OpenCode, and Pi. It is compatible with [RTK](https://github.com/rtk-ai/rtk): RTK takes over common commands and optimizes their output, while CCA removes low-value information after a command has run.

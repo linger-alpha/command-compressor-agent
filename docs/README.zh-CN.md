@@ -1,5 +1,9 @@
 # Command Compressor for Agent
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png" alt="CCA 在命令输出进入 coding agent 前进行压缩" width="720">
+</p>
+
 Command Compressor for Agent（`CCA`）致力于节省你的 token，通过规则而不是跟 Agent 说帮我省点 token。
 
 CCA 支持 Claude Code、Codex、OpenCode 稳定版和 Pi。它兼容 [RTK](https://github.com/rtk-ai/rtk)：RTK 通过接管常见命令并优化它们的输出达到效果，CCA 则在命令执行后压缩输出的无效信息。
