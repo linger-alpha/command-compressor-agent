@@ -1,41 +1,43 @@
-# Command Compressor for Agent 中文说明
+# Command Compressor for Agent
 
-Command Compressor for Agent（`CCA`）是一个面向 coding agent 的实验性命令输出压缩层，本项目受到 RTK 以及 [TACO](https://arxiv.org/abs/2604.19572) 启发：它将命令输出压缩视为 agent context optimization 问题，并采用离线生成、运行时静态执行的规则。当前版本支持 Claude Code、Codex CLI、OpenCode 稳定版和 Pi。
+Command Compressor for Agent（`cca`）在 shell 命令执行完成后、结果进入 coding
+agent 上下文前压缩其中的噪声。它会把原始结果保存在本地，并向 agent 返回更短的
+Tool Result 和一个 `raw_ref`；如果压缩文本遗漏了需要的信息，agent 可以直接读取
+原文，而不必重新执行命令。
 
-注：本项目与 RTK 兼容，RTK 在于优化高频命令，CCA 是压缩长输出命令。
+CCA 支持 Claude Code、Codex CLI、OpenCode 稳定版和 Pi。它兼容
+[RTK](https://github.com/rtk-ai/rtk)：RTK 在执行前优化常见命令，CCA 则在执行后
+处理仍然很长的输出。
 
-## 当前状态
+English documentation: [README.md](../README.md).
 
-本项目仍处于实验阶段。当前证据是积极但不充分的：我们已经观察到真实的 command-observation token 节省，并且在一个较小的 TerminalBench 2/TACO-style 样本中保持了平均分；但也观察到风险案例，即压缩可能改变 agent 轨迹，或暴露某些不适合压缩的输出类型。
+## 1. CCA 的作用、优势与使用
 
-TACO 是本项目的主要参考思想，也启发了这里使用的 TerminalBench-style paired A/B 评测方式。CCA 没有复用 TACO 的完整自动进化 runtime，而是将其思想收敛为可编辑的本地规则和 Claude Code hook，优先保证稳定性。
+构建日志、依赖安装输出、进度条和重复状态行可能占用大量上下文，却很少帮助
+agent 完成任务。CCA 会强力压缩这些低价值区域，同时保护错误、traceback、源码
+位置、编码数据、视觉诊断和其他不能安全删减的信息。
 
-当前 runtime 优先保证可恢复性和块级安全：
+发布版 runtime 有意保持简单：
 
-- 使用各 Agent 的工具调用后置替换接口，不重写命令；
-- 只在完整的 Agent 可见结果有实质净节省时替换输出；
-- 保留 `raw_ref` 作为原始输出 fallback；
-- 保留编码数据、视觉结构、密集语义、traceback 和真实失败块；
-- 豁免 RTK、查阅命令和 raw fallback read；
-- 通过 `cca gain` 暴露本地节省统计。
+- **本地、确定性执行：** 不联网、不调用模型、不使用 embedding，也不在运行时训练。
+- **可以恢复原文：** 每个被替换的结果都有本地 `raw_ref`，恢复信息无需重跑命令。
+- **按块处理：** 一段混合输出中的重要区域可以无损保留，重复区域可以强力压缩。
+- **保护查阅命令并兼容 RTK：** read、raw fallback 和 RTK 管理的命令直接放行。
+- **异常时放行：** adapter 或 compressor 出错时，agent 会收到原始 Tool Result。
+- **短结果没有额外负担：** 只有结果不少于 256 个估算 token，并且包含说明文字后的
+  完整替换结果至少节省 64 个估算 token 和 15%，CCA 才会执行替换。
 
-欢迎大家提交 issue、复现实验、讨论规则设计，尤其是那些压缩改变任务成功率或导致额外 raw fallback read 的案例。
+### 安装
 
-## 安装
-
-从 npm 安装：
+CCA 需要 Node.js 18 或更高版本。
 
 ```bash
 npm install -g @linger-alpha/cca
-```
-
-自动检测并全局安装所有已存在且受支持的 Agent：
-
-```bash
 cca init --global
 ```
 
-也可以单独安装：
+`cca init` 会检测本机已经安装的受支持 agent，并为它们安装相应集成。也可以只安装
+一个：
 
 ```bash
 cca install --claude-code --global
@@ -44,128 +46,143 @@ cca install --opencode --global
 cca install --pi --global
 ```
 
-将 `--global` 改为 `--project` 可进行项目级安装。Codex 安装后仍需在
-`/hooks` 中人工审核信任；CCA 不会绕过这一环节。Codex 当前通过 blocked
-`PostToolUse` feedback 在 code mode 中替换模型可见结果，因此界面会把压缩
-结果显示成 failed/blocked，虽然命令其实已经执行。CCA 会在 feedback 中用
-一句简短说明避免模型因此重复执行。四个 adapter 共用同一门槛：原始可见
-输出不足 256 个估算 token，或完整替换结果节省不足 64 个估算 token，或
-节省比例不足 15% 时，直接返回原始 Tool Result，不添加说明文字。
-OpenCode v2 beta 暂不支持。
-
-查看当前配置：
+如果只希望在当前仓库安装，把 `--global` 改成 `--project`。
 
 ```bash
-cca status
+cca status --json       # 检测结果、安装路径和信任状态
+cca gain                # 本地估算节省量
+cca rules               # 当前可编辑规则文件
+cca uninstall --global  # 卸载所有由 CCA 管理的全局集成
 ```
 
-查看估算 token 节省：
+Codex 安装后需要用户在 `/hooks` 中审核，CCA 不会绕过信任步骤。Codex 会把
+post-tool 替换显示成 blocked hook feedback，尽管原命令已经成功执行；因此 CCA 会
+明确告诉模型这是压缩后的结果，而不是命令执行失败。当前版本不支持 OpenCode v2
+beta。
 
-```bash
-cca gain
+## 2. CCA 的原理
+
+CCA 位于正常 Agent loop 中的“命令执行”和“模型下一轮推理”之间：
+
+```text
+                      ┌─────────────────────────────────────────┐
+                      │               Agent loop                │
+                      │                                         │
+用户请求 ───────────► Agent ─────► Bash Tool ─────► 执行命令    │
+                         ▲                          │            │
+                         │                     stdout/stderr     │
+                         │                          ▼            │
+                         │     ┌──────────────────────────────┐  │
+                         │     │             CCA              │  │
+                         │     │                              │  │
+                         │     │ 1. 命令策略                  │  │
+                         │     │    read / RTK → 原样放行     │  │
+                         │     │              │               │  │
+                         │     │ 2. Block Splitter            │  │
+                         │     │              │               │  │
+                         │     │ 3. 重要性策略                │  │
+                         │     │    保留 / 轻压缩 / 强压缩    │  │
+                         │     │              │               │  │
+                         │     │ 4. 静态规则压缩器            │  │
+                         │     └──────────────┬───────────────┘  │
+                         │                    │                  │
+                         └──── 压缩 Tool Result + raw_ref ──────┘
 ```
 
-调节压缩强度：
+首先，命令策略会放行查阅命令、raw fallback 和由 RTK 管理的命令。其他输出由一个
+线性规则 Splitter 按空白区域、时间戳、日志级别、traceback 状态、缩进和重复模式
+变化分成较粗的块。它不会解析某个具体测试框架，也不会调用模型理解文本。
 
-```bash
-cca strength default
-cca strength high
-cca strength xhigh
-cca strength low
-```
+每个块随后进入三个处理档位之一：
 
-卸载 hook：
+- **保留：** 对编码或疑似二进制数据、视觉和密集语义输出、traceback、失败信息和
+  高价值诊断进行无损保留。
+- **轻压缩：** 折叠重复内容，并保留有用的头部、尾部和关键行。
+- **强压缩：** 清除进度噪声，强力折叠重复、低信息量输出。
 
-```bash
-cca uninstall --global
-```
+最后，各 Agent adapter 把结果转换回平台格式。Agent 只会看到“结果已压缩”和原文
+位置，不会看到内部评分、档位或规则诊断。Claude Code 使用
+`updatedToolOutput`；Codex 使用 post-tool blocked feedback；OpenCode 修改
+`tool.execute.after`；Pi 替换 `tool_result.content` 并保留 `details` 和
+`isError`。
 
-## 工作原理
+生产规则是静态 JSON。仓库内的 TACO 风格离线研究流程可以生成和评判候选规则，
+但训练代码和模型依赖不会进入 npm 包。
 
-`cca` 的发布 runtime 分为三层，并且没有网络或模型调用。
+## 3. 实验数据
 
-takeover layer 统一将四种 Agent 的工具结果归一化。Claude Code 使用
-`updatedToolOutput`；Codex adapter 使用
-`decision:"block" + reason`；OpenCode
-稳定版修改 `tool.execute.after` 的输出；Pi 替换 `tool_result.content`，
-同时保留 `details/isError`。面向模型的说明文字归 takeover/adapter 层所有：
-它会说明输出已经被 CCA 压缩，并建议在本地搜索 `raw_ref`，不要重跑命令。
-这些说明只会在共同的 256-token、64-token 和 15% 可见净节省门槛全部通过
-后出现，因此短 Tool Result 不会反而增加上下文。所有 adapter 异常时都会 fail open。真实的
-Codex 0.146.0 + Luna 探针已经确认 code mode 会忽略 `stopReason`，但
-blocked feedback 能替换模型可见结果，不会撤销已经完成的命令，并能引导
-模型在压缩遗漏目标信息时读取 `raw_ref`。
+### 固定输入：原始输出、0.1.4 与 0.2.0-rc.2
 
-compression layer 先豁免 RTK、查阅命令和 raw fallback read，再清除 ANSI，
-用线性规则把输出分成较粗的块，将每块归为 `preserve`、`light` 或
-`aggressive`，最后应用现有静态规则。编码/二进制样式、密集语义、视觉结构、
-traceback 和真实失败块无损保留；进度和重复块可以高强度压缩。这里没有整段
-token 门槛和全局 token budget。compression core 只返回压缩文本和
-`raw_ref`，takeover layer 再添加 Agent 说明；Agent 不会看到内部得分、档位
-或规则诊断。
+最公平的压缩器对比，是把同一批 Tool Result 分别交给新旧版本处理。这里使用了
+Terminal-Bench 2.1 十个任务无压缩组捕获的 523 条结果。下列 token 是本地估算值，
+不是模型供应商的账单数据。
 
-evaluation layer 追加本地 JSONL 事件，并驱动 `cca gain`。它会报告估算 raw tokens、effective tokens、压缩观察次数和估算节省 tokens。
+| 压缩器 | Tool Result 估算 token | 相对原始输出 | 相对 0.1.4 |
+| --- | ---: | ---: | ---: |
+| 不压缩 | 398,555 | — | — |
+| CCA 0.1.4 | 373,320 | 减少 6.33% | — |
+| CCA 0.2.0-rc.2 | 343,646 | **减少 13.78%** | **减少 7.95%** |
 
-## 旧 strength 设置
+排除 read、RTK 和 fallback 等按设计放行的结果后，342 条通用命令更能体现压缩核心
+的差异：
 
-`low`、`default`、`high` 和 `xhigh` 仍可读写，以免破坏旧配置和脚本。
-在新管线中它们只是兼容标签，不再选择 token 门槛、budget 或不同规则集；
-实际压缩强度由每个块的静态策略独立决定。
+| 压缩器 | 估算 token | 相对原始输出 | 相对 0.1.4 |
+| --- | ---: | ---: | ---: |
+| 不压缩 | 164,762 | — | — |
+| CCA 0.1.4 | 153,366 | 减少 6.92% | — |
+| CCA 0.2.0-rc.2 | 109,853 | **减少 33.33%** | **减少 28.37%** |
 
-## 规则
+rc.2 在这次回放中保留了 100% 的审计关键事实和 100% 的编码/受保护块。CCA 有意
+不压缩所有长输出，正是为了维持这条安全边界。
 
-规则存储在用户可编辑的 JSON 文件中，`cca init` 时会复制一份默认规则。
+### 真实 Agent loop：80 次 Terminal-Bench 2.1 实验
 
-```bash
-cca rules
-```
+实验选择十个任务，每组各重复四次，使用 Codex CLI 和 max reasoning 的
+`gpt-5.6-luna`：无压缩 40 次，CCA rc.1 40 次。
 
-v3 默认规则文件包括：
+| 端到端指标 | 不压缩 | CCA |
+| --- | ---: | ---: |
+| 通过次数 | **34/40** | **33/40** |
+| 32 对双方均通过实验的输入 token 中位数 | 198,703.5 | 182,351.5 |
+| 匹配成功实验的输入 token 降幅 | — | **8.23%** |
 
-- `command_policy`：RTK 兼容，以及 `cat`、`ls`、`rg`、`grep`、`find`、
-  `head`、`tail` 等查阅命令；
-- `splitter` 和 `block_policy`：线性粗分块，以及可审计的
-  `preserve`/`light`/`aggressive` 信号。视觉和编码数据在块级保护，不再令
-  整段输出直接透传；
-- `strong_rules`：进度条、ANSI/status 噪声、包安装 chatter、Docker layer
-  progress 和高重复日志；
-- `weak_rules`：来自离线轨迹的 TACO-inspired 静态规则，保留 head/tail 和
-  重要行；发布 runtime 不做在线学习；
-- `planner`：分别定义轻压缩和高压缩的静态保留策略。相邻 `light` 块可跨
-  最多两个空行合并后再规划保留范围；该参数由 336 条真实 TerminalBench
-  tool result 筛选得到，并将第三次重复留作最终验收。`preserve` 块从不参与
-  合并。
+CCA 组全部 Tool Result 的总降幅为 9.62%，其中真正允许压缩的输出下降 22.04%。
+40 次 CCA 实验均未读取 `raw_ref`。通过数少一次仍在预发布质量容差内，但这组结果
+不能证明 CCA 会提高任务成功率：Agent 轨迹存在随机变化，而且实验没有达到预设的
+端到端输入 token 降低 10% 目标。
 
-raw fallback read 也会被白名单保护。读取已配置 raw 目录的命令，通常是 `.command-compressor-agent/raw`，不会被再次压缩。
+动态实验使用 rc.1。实验暴露的问题促成了 rc.2 对“复合源码查阅”和“仅输出到
+stdout 的安全 HTTP GET”的保护。修复已经通过固定输入回放、完整回归测试、Node 18
+容器测试、npm 包审计和四种 adapter 的真实安装 smoke test，但尚未用 rc.2 重新跑
+完整的 80 次动态实验。
 
-## 证据、风险与应对
+作为开发投入量级参考，Codex task tracker 在主要的 0.2.0 实现、排查和评估周期中
+记录了 **911,755 tokens**。这是开发过程消耗，不是 benchmark 输入量，也不是项目
+从创建至今全部成本的精确统计。
 
-TerminalBench/TACO-style A/B 测试给出了积极信号：在排除一个 infrastructure failure 后，首个 comparable 20-task 样本保持了平均分，并且许多命令观察值显著变短。同时它也暴露了风险。尤其是 `chess-best-move`，baseline 成功而 compressed 失败，原因与视觉诊断输出被过度压缩有关。
+完整方法、差异案例和风险分析见
+[Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-rc1-analysis.md)
+与[技术报告](technical-report.zh-CN.md)。
 
-`chess-best-move` 更准确地说是 image-derived symbolic reasoning，而不是证明模型具有原生视觉能力。agent 可以用 Python、PIL 或 OpenCV 读取 `chess_board.png`，输出 occupied squares、pixel grids、silhouettes、contours、candidate FEN 等文本诊断，再基于这些文本做棋理推断。因此这类文本诊断是安全关键输出：重复的点阵、方块和矩阵行可能正是证据，而不是噪声。
+## 生产包与研究代码的边界
 
-当前管线针对这些风险做了具体修复：
+npm 包只包含 `bin/`、`src/`、`rules/` 以及 npm 自动加入的 package metadata、
+README 和 license。它没有第三方运行时依赖，也不会联网或调用模型。
 
-- 视觉、棋盘、像素、轮廓、OCR、silhouette、编码数据和 dense matrix-like
-  块无损保留；
-- raw fallback read 透传，不二次压缩；
-- 真实失败和 traceback 块无损保留；
-- package smoke tests 覆盖进度条压缩、受保护块和 raw fallback 透传。
+GitHub 仓库还在 `research/` 下开源了导入、脱敏、prompt、候选生成、独立评判、
+回放分析和 Harbor/Terminal-Bench 工具。生产代码不会导入或探测该目录，
+`npm run check:package` 会检查这一边界。
 
-详细实验分析见 [technical-report.zh-CN.md](technical-report.zh-CN.md)。英文版本见 [technical-report.md](technical-report.md)。
+旧的 `low`、`default`、`high` 和 `xhigh` 名称仍可使用，以兼容已有配置。在新的
+分块管线中，它们不再选择全局 token budget 或不同规则集；压缩强度由每个块自身的
+策略决定。
 
-## 当前结论
+## 社区
 
-`cca` 是一个有潜力但仍处于实验阶段的压缩层。当前最安全的用法是：
-对 noisy outputs 做 command-observation 压缩，同时保持本地规则可见、可编辑。
-旧 strength 标签已不再改变运行行为。
+欢迎提交 issue、可复现轨迹和规则建议，尤其是压缩改变任务结果或触发不必要
+fallback 的案例。
 
-项目还需要在 TerminalBench、DeepSWE-style tasks 和其他 coding agents 上做更多重复端到端 A/B 测试。如果你发现某个任务中压缩带来了提升、损害或明显改变 agent 轨迹，欢迎分享 trace 和规则上下文，一起把安全边界做得更清楚。
-
-## Community
-
-Thanks to the [LINUX DO](https://linux.do/) community for providing a platform
-for communication and sharing.
+感谢 [LINUX DO](https://linux.do/) 社区提供交流与分享平台。
 
 ## License
 

@@ -1,57 +1,51 @@
 # Command Compressor for Agent
 
-Command Compressor for Agent (`cca`) is an experimental command-output
-compression layer for coding agents. The project is inspired by RTK and
-[TACO](https://arxiv.org/abs/2604.19572): it treats command-output compression
-as an agent-context optimization problem, then implements a conservative
-offline-rule runtime for stability. The current version supports Claude Code,
-Codex CLI, stable OpenCode, and Pi.
+Command Compressor for Agent (`cca`) reduces noisy shell output before it
+enters a coding agent's context. It works after a command has run, keeps the
+original result on disk, and gives the agent a shorter Tool Result with a
+`raw_ref` it can inspect if anything is missing.
 
-Note: this project is compatible with RTK. RTK focuses on optimizing frequent
-commands; CCA focuses on compressing commands with long outputs.
+CCA supports Claude Code, Codex CLI, stable OpenCode, and Pi. It is compatible
+with [RTK](https://github.com/rtk-ai/rtk): RTK optimizes common commands before
+execution, while CCA handles long output after execution.
 
 中文说明见 [docs/README.zh-CN.md](docs/README.zh-CN.md).
 
-## Current Status
+## 1. What CCA Does
 
-This project is experimental. The current evidence is encouraging but not final:
-we have seen real command-observation token savings and preserved mean score in
-a small TerminalBench 2/TACO-style sample, but we have also seen risk cases where
-compression changed the agent trajectory or exposed unsafe output classes.
-TACO is the main reference idea for this project and also motivates the
-TerminalBench-style paired A/B evaluation used here. CCA does not reuse TACO's
-full evolutionary runtime; it distills the idea into editable local rules and a
-Claude Code hook that favors stability.
+Long build logs, package installation output, progress bars, and repeated status
+lines can consume a large part of an agent's context without helping it solve
+the task. CCA compresses those low-value regions while preserving errors,
+tracebacks, source locations, encoded data, visual diagnostics, and other
+information that is unsafe to guess away.
 
-The current runtime therefore prioritizes recoverability and block-level safety:
+The release runtime is deliberately small:
 
-- use post-tool replacement instead of command rewriting,
-- replace only when the complete Agent-visible result is materially shorter,
-- keep a `raw_ref` fallback,
-- preserve encoded, visual, dense-semantic, traceback, and failure blocks,
-- exempt RTK and inspection/read commands,
-- expose local savings through `cca gain`.
+- **Local and deterministic.** No network calls, model calls, embeddings, or
+  runtime learning.
+- **Recoverable.** Every changed result has a local `raw_ref`; the original
+  command is not rerun to recover omitted text.
+- **Block-aware.** Important parts of a mixed output can remain lossless while
+  repetitive parts are compressed strongly.
+- **Read-safe and RTK-compatible.** Inspection commands, raw fallback reads, and
+  RTK-managed commands pass through unchanged.
+- **Fail-open.** If an adapter or compressor fails, the agent receives the
+  original Tool Result.
+- **No small-result tax.** CCA only replaces a result when it is at least 256
+  estimated tokens and the complete Agent-visible replacement saves at least
+  64 estimated tokens and 15%.
 
-We welcome issue reports, benchmark reproductions, and rule-design discussion,
-especially for cases where compression changes task success or causes extra raw
-fallback reads.
+### Install
 
-## Install
-
-Install from npm:
+CCA requires Node.js 18 or later.
 
 ```bash
 npm install -g @linger-alpha/cca
-```
-
-Auto-detect all installed supported agents and install their integrations
-globally:
-
-```bash
 cca init --global
 ```
 
-Or install one integration explicitly:
+`cca init` detects installed supported agents and installs every applicable
+integration. To install only one integration:
 
 ```bash
 cca install --claude-code --global
@@ -61,166 +55,161 @@ cca install --pi --global
 ```
 
 Use `--project` instead of `--global` for a repository-local installation.
-Codex hooks require an explicit review in `/hooks`; CCA never bypasses that
-trust step during a normal install. Codex currently exposes model-visible
-replacement in code mode through blocked `PostToolUse` feedback, so its UI
-labels a compressed result as failed/blocked even though the command already
-ran. CCA includes a short explanation in that feedback to prevent unnecessary
-reruns. All four adapters return the original Tool Result directly when it is
-shorter than 256 estimated tokens, or when the complete replacement would save
-fewer than 64 estimated tokens or 15% of the original output. OpenCode v2 beta
-is not supported by this release.
-
-Check the current configuration:
 
 ```bash
-cca status --json
+cca status --json       # detection, installation paths, and trust state
+cca gain                # local estimated savings
+cca rules               # active editable rule file
+cca uninstall --global  # remove all CCA-managed global integrations
 ```
 
-Show estimated token savings:
+Codex requires the user to review its hook in `/hooks`; CCA does not bypass that
+trust step. Codex presents post-tool replacement through blocked hook feedback
+even though the command has already completed, so CCA explicitly tells the
+model that the text is a compressed result rather than a command failure.
+OpenCode v2 beta is not supported by this release.
 
-```bash
-cca gain
+## 2. How CCA Works
+
+CCA sits inside the normal Agent loop, between command execution and the next
+model turn:
+
+```text
+                      ┌─────────────────────────────────────────┐
+                      │               Agent loop                │
+                      │                                         │
+User request ───────► Agent ─────► Bash Tool ─────► Command     │
+                         ▲                         execution     │
+                         │                              │        │
+                         │                         stdout/stderr  │
+                         │                              ▼        │
+                         │     ┌──────────────────────────────┐  │
+                         │     │             CCA              │  │
+                         │     │                              │  │
+                         │     │ 1. Command policy            │  │
+                         │     │    read / RTK → unchanged    │  │
+                         │     │              │               │  │
+                         │     │ 2. Block Splitter            │  │
+                         │     │              │               │  │
+                         │     │ 3. Importance policy         │  │
+                         │     │    preserve / light / strong │  │
+                         │     │              │               │  │
+                         │     │ 4. Static rule compressor    │  │
+                         │     └──────────────┬───────────────┘  │
+                         │                    │                  │
+                         └──── compressed Tool Result + raw_ref ┘
 ```
 
-Change compression strength:
+First, command policy exempts inspection, raw fallback, and RTK-managed
+commands. For other commands, a linear rule-based splitter groups adjacent
+lines using blank regions, timestamps, log levels, traceback state, indentation,
+and repetition changes. It does not parse a specific test framework or ask a
+model what the text means.
 
-```bash
-cca strength default
-cca strength high
-cca strength xhigh
-cca strength low
-```
+Each block is then assigned one of three actions:
 
-Uninstall selected integrations, or omit the agent flags to remove every
-CCA-managed integration in that scope:
+- **Preserve:** keep encoded or binary-looking data, visual and dense-semantic
+  output, tracebacks, failures, and high-value diagnostics losslessly.
+- **Light:** collapse duplicates and retain useful head, tail, and critical
+  lines.
+- **Strong:** remove progress noise and aggressively fold repetitive,
+  low-information output.
 
-```bash
-cca uninstall --codex --global
-cca uninstall --global
-```
+Finally, each Agent adapter replaces the platform-specific Tool Result. The
+agent only sees that the result was compressed and where the original is
+stored; internal scores, tiers, and rule diagnostics are never added to its
+context. Claude Code uses `updatedToolOutput`, Codex uses post-tool blocked
+feedback, OpenCode updates `tool.execute.after`, and Pi replaces
+`tool_result.content` while preserving `details` and `isError`.
 
-## How It Works
+The rules are static JSON. Offline TACO-inspired research can propose and judge
+new candidates, but no training code or model dependency is shipped in the npm
+package.
 
-`cca` has three release-runtime layers and performs no network or model calls.
+## 3. Experimental Results
 
-The takeover layer integrates with each agent's post-tool lifecycle. Claude
-Code receives `updatedToolOutput`; Codex returns `decision: "block"` with the
-compressed result in `reason`; stable OpenCode mutates the
-`tool.execute.after` output; and Pi replaces `tool_result.content` while
-preserving `details` and `isError`. Every adapter normalizes to the same
-`{command, stdout, stderr, exitCode, agent, toolName}` shape and fails open on
-an exception. Adapter-owned presentation tells the model that CCA compressed
-the output and recommends searching the local `raw_ref` instead of rerunning
-the command. This explanation is only added after the common 256-token,
-64-token, and 15% visible-savings gate passes, so small Tool Results do not pay
-for compression metadata. Real Codex 0.146.0 + Luna probes confirmed that `stopReason` is
-ignored in code mode, while blocked feedback replaces the model-visible result,
-does not undo the already completed command, and supports `raw_ref` fallback.
+### Same input: raw output vs 0.1.4 vs 0.2.0-rc.2
 
-The compression layer first exempts RTK, inspection/read commands, and raw
-fallback reads. It removes ANSI control sequences, splits the remaining output
-into coarse rule-based blocks, classifies each block as `preserve`, `light`, or
-`aggressive`, and then applies the existing static rules at that tier. Encoded,
-binary-looking, dense-semantic, visual, traceback, and real failure blocks are
-retained losslessly. Progress and duplicate blocks can be compressed strongly.
-There is no whole-output token threshold or global token budget. The compression
-core returns compressed text plus a `raw_ref`; the takeover layer adds the
-Agent-facing explanation. Scores, tiers, and rule diagnostics are not shown to
-the coding agent.
+The fairest compressor comparison replays the same 523 Tool Results captured
+from the no-compression arm of ten Terminal-Bench 2.1 tasks. Token counts are
+estimates, not provider billing figures.
 
-The evaluation layer appends local JSONL events and powers `cca gain`, which reports estimated raw tokens, effective tokens, compressed observations, and estimated saved tokens.
+| Compressor | Estimated Tool Result tokens | Reduction vs raw | Reduction vs 0.1.4 |
+| --- | ---: | ---: | ---: |
+| No compression | 398,555 | — | — |
+| CCA 0.1.4 | 373,320 | 6.33% | — |
+| CCA 0.2.0-rc.2 | 343,646 | **13.78%** | **7.95%** |
 
-## Legacy Strength Setting
+When read-only, RTK, and fallback passthroughs are excluded, the 342
+general-command results show the difference more clearly:
 
-`low`, `default`, `high`, and `xhigh` remain accepted so existing configuration
-files and scripts do not break. They are compatibility labels in the new
-pipeline and no longer select token thresholds, budgets, or different rule
-sets. Compression strength is chosen independently for each block by the static
-block policy.
+| Compressor | Estimated tokens | Reduction vs raw | Reduction vs 0.1.4 |
+| --- | ---: | ---: | ---: |
+| No compression | 164,762 | — | — |
+| CCA 0.1.4 | 153,366 | 6.92% | — |
+| CCA 0.2.0-rc.2 | 109,853 | **33.33%** | **28.37%** |
 
-## Rules
+The rc.2 replay retained 100% of the audited critical facts and 100% of the
+encoded/protected blocks. This safety boundary is why CCA intentionally does
+not compress every large output.
 
-Rules are stored in a user-editable JSON file copied during `cca init`.
+### Real Agent loop: 80 Terminal-Bench 2.1 trials
 
-```bash
-cca rules
-```
+Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max
+reasoning: 40 trials without compression and 40 with CCA rc.1.
 
-The v3 default rule file contains:
+| End-to-end measure | No compression | CCA |
+| --- | ---: | ---: |
+| Successful trials | **34/40** | **33/40** |
+| Median input tokens on the 32 matched-success pairs | 198,703.5 | 182,351.5 |
+| Matched-success input reduction | — | **8.23%** |
 
-- `command_policy`: RTK compatibility plus inspection/read commands such as
-  `cat`, `ls`, `rg`, `grep`, `find`, `head`, and `tail`.
-- `splitter` and `block_policy`: coarse linear-time boundaries and auditable
-  `preserve`/`light`/`aggressive` signals. Visual and encoded data are protected
-  at block level rather than bypassing the entire observation.
-- `strong_rules`: progress bars, ANSI/status noise, package install chatter,
-  Docker layer progress, and high-repetition logs.
-- `weak_rules`: longer TACO-inspired learned rules distilled from offline traces.
-  They keep head/tail plus important lines. The release runtime does not do
-  online learning.
-- `planner`: separate light and aggressive static retention strategies. Adjacent
-  light blocks may be joined across at most two blank lines before retention is
-  planned; this setting was selected on 336 real TerminalBench tool results,
-  with the third repeat held out. Preserve blocks are never eligible. Existing
-  v1/v2 user rule files inherit built-in block defaults and are not overwritten.
+Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while
+the subset eligible for compression was reduced by 22.04%. None of the 40 CCA
+trials needed to read a `raw_ref`. The one-pass difference is within the
+prerelease quality guard, but this experiment does not prove a task-success
+improvement: Agent trajectories vary, and the planned 10% end-to-end input
+target was not reached.
 
-Raw fallback reads are also whitelisted. Commands that read the configured raw
-directory, normally `.command-compressor-agent/raw`, are not compressed again.
+The dynamic run used rc.1. Its findings led to rc.2 protections for compound
+source inspections and safe stdout-only HTTP GET reads. Those fixes passed the
+same-input replay, regression suite, Node 18 container test, npm package audit,
+and real installation smoke tests for all four adapters; the full 80-trial
+dynamic matrix has not yet been repeated on rc.2.
 
-## Evidence, Risks, And Mitigations
+For scale, the Codex task tracker recorded **911,755 tokens** during the main
+0.2.0 implementation, investigation, and evaluation cycle. This is development
+effort, not benchmark input usage and not a claim about lifetime project cost.
 
-TerminalBench/TACO-style A/B tests showed positive signs: the first comparable
-20-task sample preserved mean score after excluding one infrastructure failure,
-and many command observations shrank substantially. They also exposed risks. In
-particular, `chess-best-move` succeeded in baseline but failed in compressed
-mode after visual diagnostic output had been compressed too aggressively.
+See
+[the full Terminal-Bench 2.1 analysis](research/benchmark/tb21-10x4-rc1-analysis.md)
+and [the technical report](docs/technical-report.md) for methodology, unequal
+pairs, risks, and earlier experiments.
 
-`chess-best-move` is image-derived symbolic reasoning, not proof that the model
-had native vision. The agent can inspect `chess_board.png` with Python, PIL, or
-OpenCV, emit textual diagnostics such as occupied squares, pixel grids,
-silhouettes, contours, and candidate FEN strings, and then reason over that text.
-That makes the textual diagnostic output safety-critical: repeated dots, blocks,
-and matrix-like rows can be evidence rather than noise.
+## Runtime and Research Boundary
 
-The current pipeline responds with concrete mitigations:
+The npm package contains only `bin/`, `src/`, `rules/`, and npm's automatic
+package metadata, README, and license. It has zero third-party runtime
+dependencies and performs zero network or model calls.
 
-- visual, board, pixel, contour, OCR, silhouette, encoded, and dense matrix-like
-  blocks are retained losslessly,
-- raw fallback reads pass through and are not compressed again,
-- real failure and traceback blocks are retained losslessly,
-- package smoke tests verify progress compression, protected blocks, and
-  raw fallback passthrough.
+The GitHub repository additionally contains importers, redaction tools, prompts,
+candidate generation, independent judging, replay analysis, and
+Harbor/Terminal-Bench tooling under `research/`. Production code never imports
+or probes that directory. `npm run check:package` enforces the boundary.
 
-See [docs/technical-report.md](docs/technical-report.md) for the experiment
-summary and case analysis. A Chinese counterpart is available at
-[docs/technical-report.zh-CN.md](docs/technical-report.zh-CN.md).
-
-## Current Conclusion
-
-`cca` is a promising but still experimental compression layer. The safest
-current use is command-observation compression for noisy outputs, with local
-rules kept visible and editable. The old strength labels no longer change
-runtime behavior.
-
-The project needs more repeated end-to-end A/B tests across TerminalBench,
-DeepSWE-style tasks, and other coding agents. If you find a task where
-compression improves, hurts, or changes the agent trajectory, please share the
-trace and rule context so the community can improve the safety boundary.
-
-## Research and npm package boundary
-
-The open-source repository contains the offline TACO-style importer, local
-redaction and auditing, Luna candidate generation, Sol independent judging,
-rule replay, and Harbor/Terminal-Bench tooling under `research/`. None of that
-is published to npm or imported by production code. The npm tarball contains
-only `bin/`, `src/`, `rules/`, and npm's automatic package metadata, README,
-and license. `npm run check:package` enforces this boundary.
+The legacy strength names `low`, `default`, `high`, and `xhigh` remain accepted
+for configuration compatibility. In the block pipeline they no longer select
+global token budgets or different rule sets; compression strength is chosen per
+block.
 
 ## Community
 
-Thanks to the [LINUX DO](https://linux.do/) community for providing a platform
-for communication and sharing.
+Issues, reproducible traces, and rule proposals are welcome—especially cases
+where compression changes task success or triggers an unnecessary fallback
+read.
+
+Thanks to the [LINUX DO](https://linux.do/) community for providing a place to
+communicate and share the project.
 
 ## License
 
