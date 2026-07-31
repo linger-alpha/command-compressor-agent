@@ -58,7 +58,7 @@ State is persisted after every trial under `research/jobs/`. The runner accepts
 trials sequentially and the remainder with two workers.
 
 The completed result and post-experiment rc.2 fixes are documented in
-[`tb21-10x4-rc1-analysis.md`](tb21-10x4-rc1-analysis.md).
+[`tb21-10x4-analysis.md`](tb21-10x4-analysis.md).
 
 ## Earlier 10 × 3 development experiment
 

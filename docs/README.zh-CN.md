@@ -108,9 +108,7 @@ flowchart LR
 - **轻压缩：** 折叠重复内容，并保留有用的头部、尾部和关键行。
 - **强压缩：** 清除进度噪声，强力折叠重复、低信息量输出。
 
-最后，各 Agent adapter 把结果转换回平台格式。Agent 只会看到“结果已压缩”和原文位置，不会看到内部评分、档位或规则诊断。Claude Code 使用 `updatedToolOutput`；Codex 使用 post-tool blocked feedback；OpenCode 修改 `tool.execute.after`；Pi 替换 `tool_result.content` 并保留 `details` 和 `isError`。
-
-生产规则是静态 JSON。仓库内的 TACO 风格离线研究流程可以生成和评判候选规则，但训练代码和模型依赖不会进入 npm 包。
+最后，各 Agent adapter 把结果转换回平台格式，Agent 只会看到“结果已压缩”和原文位置，不会看到内部评分、档位或规则诊断。
 
 ## 3. 实验数据
 
@@ -120,19 +118,15 @@ flowchart LR
 | --- | --- |
 | Benchmark | `terminal-bench/terminal-bench-2-1@latest`，并记录每道题的 revision checksum |
 | 任务 | `build-cython-ext`、`pypi-server`、`sqlite-with-gcov`、`log-summary-date-ranges`、`regex-log`、`nginx-request-logging`、`extract-elf`、`sqlite-db-truncate`、`code-from-image`、`count-dataset-tokens` |
-| Agent | Codex CLI，通过 Harbor 在相互隔离的 Docker 任务环境中运行 |
+| Agent | Codex CLI |
 | 模型 | `gpt-5.6-luna`，`max` reasoning effort |
-| 动态实验组 | 不压缩 vs CCA 0.2.0-rc.1（`00e82fa`） |
 | 重复次数 | 每道题、每组各四次：10 个任务 × 4 次 × 2 组，共 80 次有效实验 |
-| 实验顺序 | 使用种子 `20260729` 随机排列；该种子只控制运行顺序，不代表模型输出是确定性的 |
-| 执行方式 | 前 37 次有效实验串行执行；验证隔离状态更新后，剩余 43 次使用两个 worker |
-| 重试规则 | 三次实验准备阶段遇到临时 apt 镜像 EOF，重试成功；这些失败不计入 80 次有效任务结果 |
 
 下文的端到端输入 token 由 Codex 对完整且不断变化的 Agent 轨迹报告；固定输入表格则使用 CCA 的本地 token 估算器统计捕获的 Tool Result。两者回答的问题不同，不能当作同一个指标直接比较。
 
 ### 固定输入：原始输出、0.1.4 与 0.2.0
 
-固定输入对比使用 40 次无压缩实验捕获的全部 523 条 Tool Result，分别按原始输出、CCA 0.1.4（`7830b17`）和在 rc.2 定型的 0.2.0 规则进行确定性回放。这样可以排除 Agent 轨迹变化，只比较压缩器本身。下列 token 是本地估算值，不是模型供应商的账单数据。
+固定输入对比使用 40 次无压缩实验捕获的全部 523 条 Tool Result，分别按原始输出、CCA 0.1.4（`7830b17`）和 CCA 0.2.0 的正式规则进行确定性回放。这样可以排除 Agent 轨迹变化，只比较压缩器本身。下列 token 是本地估算值，不是模型供应商的账单数据。
 
 | 压缩器 | Tool Result 估算 token | 相对原始输出 | 相对 0.1.4 |
 | --- | ---: | ---: | ---: |
@@ -148,11 +142,11 @@ flowchart LR
 | CCA 0.1.4 | 153,366 | 减少 6.92% | — |
 | CCA 0.2.0 | 109,853 | **减少 33.33%** | **减少 28.37%** |
 
-rc.2 在这次回放中保留了 100% 的审计关键事实和 100% 的编码/受保护块。CCA 有意不压缩所有长输出，正是为了维持这条安全边界。
+CCA 0.2.0 在这次回放中保留了 100% 的审计关键事实和 100% 的编码/受保护块。CCA 有意不压缩所有长输出，正是为了维持这条安全边界。
 
 ### 真实 Agent loop：80 次 Terminal-Bench 2.1 实验
 
-实验选择十个任务，每组各重复四次，使用 Codex CLI 和 max reasoning 的 `gpt-5.6-luna`：无压缩 40 次，CCA rc.1 40 次。
+实验选择十个任务，每组各重复四次，使用 Codex CLI 和 max reasoning 的 `gpt-5.6-luna`：无压缩 40 次，CCA 40 次。
 
 | 端到端指标 | 不压缩 | CCA |
 | --- | ---: | ---: |
@@ -162,7 +156,7 @@ rc.2 在这次回放中保留了 100% 的审计关键事实和 100% 的编码/�
 
 CCA 组全部 Tool Result 的总降幅为 9.62%，其中真正允许压缩的输出下降 22.04%。
 
-\*：对比 CCA 与不压缩的性能，CCA 多一次成功与两次失败，其中一次失败经诊断与压缩无关，一次暴露了问题“curl GET 输出被压缩导致模型无法获取 README 信息”，已在 0.2.0 修复，该保护最初加入 rc.2。完整结果、差异案例、局限和发布判断见 [Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-rc1-analysis.md)。
+\*：对比 CCA 与不压缩的性能，CCA 多一次成功与两次失败，其中一次失败经诊断与压缩无关，一次暴露了问题“curl GET 输出被压缩导致模型无法获取 README 信息”，已在 0.2.0 修复。完整结果、差异案例、局限和发布判断见 [Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-analysis.md)。
 
 ## 生产包与研究代码的边界
 

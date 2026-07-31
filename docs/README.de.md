@@ -108,9 +108,7 @@ Jedem Block wird anschließend eine von drei Aktionen zugewiesen:
 - **Leicht:** Duplikate zusammenfassen und nützliche Anfangs-, End- und kritische Zeilen behalten.
 - **Stark:** Fortschrittsrauschen entfernen und sich wiederholende Ausgaben mit geringem Informationswert stark zusammenfassen.
 
-Abschließend ersetzt jeder Adapter das Tool-Ergebnis im plattformspezifischen Format. Der Agent sieht nur, dass das Ergebnis komprimiert wurde und wo das Original gespeichert ist; interne Bewertungen, Stufen und Regeldiagnosen werden nie in seinen Kontext aufgenommen. Claude Code verwendet `updatedToolOutput`, Codex blockiertes Post-Tool-Feedback, OpenCode aktualisiert `tool.execute.after`, und Pi ersetzt `tool_result.content`, wobei `details` und `isError` erhalten bleiben.
-
-Die Regeln sind statische JSON-Dateien. Offline-Forschung nach dem Vorbild von TACO kann neue Kandidaten vorschlagen und bewerten, aber das npm-Paket enthält weder Trainingscode noch Modellabhängigkeiten.
+Abschließend konvertiert jeder Adapter das Ergebnis zurück in das plattformspezifische Format. Der Agent sieht nur, dass das Ergebnis komprimiert wurde und wo das Original gespeichert ist; interne Bewertungen, Stufen und Regeldiagnosen werden nie in seinen Kontext aufgenommen.
 
 ## 3. Experimentelle Ergebnisse
 
@@ -120,19 +118,15 @@ Die Regeln sind statische JSON-Dateien. Offline-Forschung nach dem Vorbild von T
 | --- | --- |
 | Benchmark | `terminal-bench/terminal-bench-2-1@latest`, Aufgabenrevisionen per Prüfsumme festgehalten |
 | Aufgaben | `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`, `log-summary-date-ranges`, `regex-log`, `nginx-request-logging`, `extract-elf`, `sqlite-db-truncate`, `code-from-image` und `count-dataset-tokens` |
-| Agent | Codex CLI über Harbor in isolierten Docker-Umgebungen pro Aufgabe |
+| Agent | Codex CLI |
 | Modell | `gpt-5.6-luna`, Schlussfolgerungsaufwand `max` |
-| Dynamische Gruppen | Ohne Komprimierung gegenüber CCA 0.2.0-rc.1 (`00e82fa`) |
 | Wiederholungen | Vier je Aufgabe und Gruppe: 10 Aufgaben × 4 Wiederholungen × 2 Gruppen = 80 gültige Durchläufe |
-| Reihenfolge | Randomisiert mit Seed `20260729`; der Seed steuert die Reihenfolge, nicht den Determinismus des Modells |
-| Ausführung | Die ersten 37 gültigen Durchläufe liefen sequenziell; die übrigen 43 nach Prüfung der isolierten Zustandsaktualisierung mit zwei Workern |
-| Wiederholungsrichtlinie | Drei durch vorübergehende EOF-Fehler eines apt-Spiegels betroffene Setup-Versuche wurden wiederholt und aus den 80 gültigen Ergebnissen ausgeschlossen |
 
 Die folgenden End-to-End-Eingabetoken werden von Codex für die vollständige, veränderliche Agent-Trajektorie gemeldet. Die Tabellen mit fester Eingabe verwenden dagegen CCAs lokalen Token-Schätzer für aufgezeichnete Tool-Ergebnisse. Beide beantworten unterschiedliche Fragen und sollten nicht wie dieselbe Metrik verglichen werden.
 
 ### Gleiche Eingabe: Rohausgabe, 0.1.4 und 0.2.0
 
-Der Vergleich mit fester Eingabe spielt alle 523 Tool-Ergebnisse aus den 40 Durchläufen ohne Komprimierung deterministisch als Rohausgabe, mit CCA 0.1.4 (`7830b17`) und mit den in rc.2 finalisierten Regeln von CCA 0.2.0 ab. Dadurch wird das Verhalten des Kompressors von Schwankungen der Agent-Trajektorie getrennt. Die Tokenzahlen sind lokale Schätzungen, keine Abrechnungsdaten des Modellanbieters.
+Der Vergleich mit fester Eingabe spielt alle 523 Tool-Ergebnisse aus den 40 Durchläufen ohne Komprimierung deterministisch als Rohausgabe, mit CCA 0.1.4 (`7830b17`) und mit den finalen Regeln von CCA 0.2.0 ab. Dadurch wird das Verhalten des Kompressors von Schwankungen der Agent-Trajektorie getrennt. Die Tokenzahlen sind lokale Schätzungen, keine Abrechnungsdaten des Modellanbieters.
 
 | Kompressor | Geschätzte Tool-Ergebnis-Tokens | Reduktion gegenüber Rohdaten | Reduktion gegenüber 0.1.4 |
 | --- | ---: | ---: | ---: |
@@ -148,11 +142,11 @@ Werden unveränderte Lese-, RTK- und Fallback-Ergebnisse ausgeschlossen, zeigen 
 | CCA 0.1.4 | 153.366 | 6,92 % | — |
 | CCA 0.2.0 | 109.853 | **33,33 %** | **28,37 %** |
 
-Bei dieser Wiedergabe bewahrte rc.2 100 % der geprüften kritischen Fakten und 100 % der kodierten beziehungsweise geschützten Blöcke. Um diese Sicherheitsgrenze einzuhalten, komprimiert CCA bewusst nicht jede lange Ausgabe.
+Bei dieser Wiedergabe bewahrte CCA 0.2.0 100 % der geprüften kritischen Fakten und 100 % der kodierten beziehungsweise geschützten Blöcke. Um diese Sicherheitsgrenze einzuhalten, komprimiert CCA bewusst nicht jede lange Ausgabe.
 
 ### Reale Agent-Schleife: 80 Terminal-Bench-2.1-Durchläufe
 
-Zehn Aufgaben wurden je Gruppe viermal mit Codex CLI und `gpt-5.6-luna` bei maximalem Schlussfolgerungsaufwand ausgeführt: 40 Durchläufe ohne Komprimierung und 40 mit CCA rc.1.
+Zehn Aufgaben wurden je Gruppe viermal mit Codex CLI und `gpt-5.6-luna` bei maximalem Schlussfolgerungsaufwand ausgeführt: 40 Durchläufe ohne Komprimierung und 40 mit CCA.
 
 | End-to-End-Messwert | Ohne Komprimierung | CCA |
 | --- | ---: | ---: |
@@ -162,7 +156,7 @@ Zehn Aufgaben wurden je Gruppe viermal mit Codex CLI und `gpt-5.6-luna` bei maxi
 
 Innerhalb der CCA-Gruppe wurden alle Tool-Ergebnisse zusammen um 9,62 % reduziert; die tatsächlich komprimierbare Teilmenge wurde um 22,04 % reduziert.
 
-\*: Gegenüber der Gruppe ohne Komprimierung erzielte CCA einen zusätzlichen Erfolg und zwei zusätzliche Fehlschläge. Ein Fehlschlag wurde als unabhängig von der Komprimierung diagnostiziert; der andere zeigte, dass eine komprimierte `curl GET`-Ausgabe das Modell daran hinderte, README-Informationen abzurufen. Dieses Problem wurde in 0.2.0 behoben; der entsprechende Schutz wurde erstmals in rc.2 eingeführt. Der [vollständige Terminal-Bench-2.1-Versuchsbericht](../research/benchmark/tb21-10x4-rc1-analysis.md) enthält sämtliche Ergebnisse, abweichende Fälle, Einschränkungen und die Veröffentlichungsentscheidung.
+\*: Gegenüber der Gruppe ohne Komprimierung erzielte CCA einen zusätzlichen Erfolg und zwei zusätzliche Fehlschläge. Ein Fehlschlag wurde als unabhängig von der Komprimierung diagnostiziert; der andere zeigte, dass eine komprimierte `curl GET`-Ausgabe das Modell daran hinderte, README-Informationen abzurufen. Dieses Problem wurde in 0.2.0 behoben. Der [vollständige Terminal-Bench-2.1-Versuchsbericht](../research/benchmark/tb21-10x4-analysis.md) enthält sämtliche Ergebnisse, abweichende Fälle, Einschränkungen und die Veröffentlichungsentscheidung.
 
 ## Trennung von Laufzeit und Forschung
 

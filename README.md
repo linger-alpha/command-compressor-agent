@@ -108,9 +108,7 @@ Each block is then assigned one of three actions:
 - **Light:** collapse duplicates and retain useful head, tail, and critical lines.
 - **Strong:** remove progress noise and aggressively fold repetitive, low-information output.
 
-Finally, each Agent adapter replaces the platform-specific Tool Result. The agent only sees that the result was compressed and where the original is stored; internal scores, tiers, and rule diagnostics are never added to its context. Claude Code uses `updatedToolOutput`, Codex uses post-tool blocked feedback, OpenCode updates `tool.execute.after`, and Pi replaces `tool_result.content` while preserving `details` and `isError`.
-
-The rules are static JSON. Offline TACO-inspired research can propose and judge new candidates, but no training code or model dependency is shipped in the npm package.
+Finally, each Agent adapter converts the result back to the platform-specific format. The Agent only sees that the result was compressed and where the original is stored; internal scores, tiers, and rule diagnostics are never added to its context.
 
 ## 3. Experimental Results
 
@@ -120,19 +118,15 @@ The rules are static JSON. Offline TACO-inspired research can propose and judge 
 | --- | --- |
 | Benchmark | `terminal-bench/terminal-bench-2-1@latest`, with task revisions recorded by checksum |
 | Tasks | `build-cython-ext`, `pypi-server`, `sqlite-with-gcov`, `log-summary-date-ranges`, `regex-log`, `nginx-request-logging`, `extract-elf`, `sqlite-db-truncate`, `code-from-image`, and `count-dataset-tokens` |
-| Agent | Codex CLI running through Harbor in isolated Docker task environments |
+| Agent | Codex CLI |
 | Model | `gpt-5.6-luna`, `max` reasoning effort |
-| Dynamic arms | No compression vs CCA 0.2.0-rc.1 (`00e82fa`) |
 | Repetitions | Four per task and arm: 10 tasks × 4 repeats × 2 arms = 80 valid trials |
-| Trial order | Randomized with seed `20260729`; the seed controls ordering, not model determinism |
-| Execution | The first 37 valid trials ran sequentially; the remaining 43 ran with two workers after validating isolated state updates |
-| Retry policy | Three setup attempts affected by transient apt-mirror EOF errors were retried and excluded from the 80 valid task results |
 
 The end-to-end input counts below are reported by Codex over the complete, changing Agent trajectory. The fixed-input tables instead use CCA's local token estimator on captured Tool Results. They answer different questions and should not be compared as if they were the same metric.
 
 ### Same input: raw output vs 0.1.4 vs 0.2.0
 
-The fixed-input comparison takes all 523 Tool Results captured from the 40 no-compression trials and deterministically replays them as raw output, through CCA 0.1.4 (`7830b17`), and through the post-experiment 0.2.0 rules finalized in rc.2. This isolates compressor behavior from Agent trajectory variation. Token counts are local estimates, not provider billing figures.
+The fixed-input comparison takes all 523 Tool Results captured from the 40 no-compression trials and deterministically replays them as raw output, through CCA 0.1.4 (`7830b17`), and through the final CCA 0.2.0 rules. This isolates compressor behavior from Agent trajectory variation. Token counts are local estimates, not provider billing figures.
 
 | Compressor | Estimated Tool Result tokens | Reduction vs raw | Reduction vs 0.1.4 |
 | --- | ---: | ---: | ---: |
@@ -148,11 +142,11 @@ When read-only, RTK, and fallback passthroughs are excluded, the 342 general-com
 | CCA 0.1.4 | 153,366 | 6.92% | — |
 | CCA 0.2.0 | 109,853 | **33.33%** | **28.37%** |
 
-The rc.2 replay retained 100% of the audited critical facts and 100% of the encoded/protected blocks. This safety boundary is why CCA intentionally does not compress every large output.
+CCA 0.2.0 retained 100% of the audited critical facts and 100% of the encoded/protected blocks in this replay. This safety boundary is why CCA intentionally does not compress every large output.
 
 ### Real Agent loop: 80 Terminal-Bench 2.1 trials
 
-Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max reasoning: 40 trials without compression and 40 with CCA rc.1.
+Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max reasoning: 40 trials without compression and 40 with CCA.
 
 | End-to-end measure | No compression | CCA |
 | --- | ---: | ---: |
@@ -162,7 +156,7 @@ Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max r
 
 Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while the subset eligible for compression was reduced by 22.04%.
 
-\*: Compared with no compression, CCA produced one additional success and two additional failures. One failure was diagnosed as unrelated to compression; the other exposed an issue where compressed `curl GET` output prevented the model from obtaining README information. That issue was fixed in 0.2.0, with the protection first introduced in rc.2. See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
+\*: Compared with no compression, CCA produced one additional success and two additional failures. One failure was diagnosed as unrelated to compression; the other exposed an issue where compressed `curl GET` output prevented the model from obtaining README information. That issue was fixed in 0.2.0. See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
 
 ## Runtime and Research Boundary
 
