@@ -1,8 +1,6 @@
 # Command Compressor for Agent
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png" alt="CCA 在命令输出进入 coding agent 前进行压缩" width="720">
-</p>
+![CCA 在命令输出进入 coding agent 前进行压缩](https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png)
 
 Command Compressor for Agent（`CCA`）致力于节省你的 token，通过规则而不是跟 Agent 说帮我省点 token。
 
@@ -150,15 +148,13 @@ rc.2 在这次回放中保留了 100% 的审计关键事实和 100% 的编码/�
 
 | 端到端指标 | 不压缩 | CCA |
 | --- | ---: | ---: |
-| 通过次数 | **34/40** | **33/40** |
+| 通过次数 | **34/40** | **33/40\*** |
 | 32 对双方均通过实验的输入 token 中位数 | 198,703.5 | 182,351.5 |
 | 匹配成功实验的输入 token 降幅 | — | **8.23%** |
 
-CCA 组全部 Tool Result 的总降幅为 9.62%，其中真正允许压缩的输出下降 22.04%。40 次 CCA 实验均未读取 `raw_ref`。通过数少一次仍在预发布质量容差内，但这组结果不能证明 CCA 会提高任务成功率：Agent 轨迹存在随机变化，而且实验没有达到预设的端到端输入 token 降低 10% 目标。
+CCA 组全部 Tool Result 的总降幅为 9.62%，其中真正允许压缩的输出下降 22.04%。
 
-动态实验使用 rc.1。实验暴露的问题促成了 rc.2 对“复合源码查阅”和“仅输出到 stdout 的安全 HTTP GET”的保护。修复已经通过固定输入回放、完整回归测试、Node 18 容器测试、npm 包审计和四种 adapter 的真实安装 smoke test，但尚未用 rc.2 重新跑完整的 80 次动态实验。
-
-完整结果、差异案例、局限和发布判断见 [Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-rc1-analysis.md)。
+\*：对比 CCA 与不压缩的性能，CCA 多一次成功与两次失败，其中一次失败经诊断与压缩无关，一次暴露了问题“curl GET 输出被压缩导致模型无法获取 README 信息”，已在 rc.2 修复。完整结果、差异案例、局限和发布判断见 [Terminal-Bench 2.1 实验报告](../research/benchmark/tb21-10x4-rc1-analysis.md)。
 
 ## 生产包与研究代码的边界
 

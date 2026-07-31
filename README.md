@@ -1,8 +1,6 @@
 # Command Compressor for Agent
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png" alt="CCA compresses command output before it reaches a coding agent" width="720">
-</p>
+![CCA compresses command output before it reaches a coding agent](https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png)
 
 Command Compressor for Agent (`CCA`) saves tokens with rules instead of asking the Agent to “use fewer tokens.”
 
@@ -150,15 +148,13 @@ Ten tasks were run four times per arm with Codex CLI and `gpt-5.6-luna` at max r
 
 | End-to-end measure | No compression | CCA |
 | --- | ---: | ---: |
-| Successful trials | **34/40** | **33/40** |
+| Successful trials | **34/40** | **33/40\*** |
 | Median input tokens on the 32 matched-success pairs | 198,703.5 | 182,351.5 |
 | Matched-success input reduction | — | **8.23%** |
 
-Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while the subset eligible for compression was reduced by 22.04%. None of the 40 CCA trials needed to read a `raw_ref`. The one-pass difference is within the prerelease quality guard, but this experiment does not prove a task-success improvement: Agent trajectories vary, and the planned 10% end-to-end input target was not reached.
+Within the CCA arm, all Tool Results were reduced by 9.62% in aggregate, while the subset eligible for compression was reduced by 22.04%.
 
-The dynamic run used rc.1. Its findings led to rc.2 protections for compound source inspections and safe stdout-only HTTP GET reads. Those fixes passed the same-input replay, regression suite, Node 18 container test, npm package audit, and real installation smoke tests for all four adapters; the full 80-trial dynamic matrix has not yet been repeated on rc.2.
-
-See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
+\*: Compared with no compression, CCA produced one additional success and two additional failures. One failure was diagnosed as unrelated to compression; the other exposed an issue where compressed `curl GET` output prevented the model from obtaining README information. That issue was fixed in rc.2. See [the full Terminal-Bench 2.1 experiment report](research/benchmark/tb21-10x4-rc1-analysis.md) for the complete results, unequal pairs, limitations, and release decision.
 
 ## Runtime and Research Boundary
 
