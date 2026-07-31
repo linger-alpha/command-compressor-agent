@@ -1,6 +1,6 @@
 # Command Compressor for Agent
 
-![CCA compresses command output before it reaches a coding agent](https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png)
+![CCA compresses command output before it reaches a coding agent](docs/assets/cca-hero.png)
 
 Command Compressor for Agent (`CCA`) saves tokens with rules instead of asking the Agent to “use fewer tokens.”
 
@@ -162,7 +162,7 @@ The npm package contains only `bin/`, `src/`, `rules/`, and npm's automatic pack
 
 The GitHub repository additionally contains importers, redaction tools, prompts, candidate generation, independent judging, replay analysis, and Harbor/Terminal-Bench tooling under `research/`. Production code never imports or probes that directory. `npm run check:package` enforces the boundary.
 
-The legacy strength names `low`, `default`, `high`, and `xhigh` remain accepted for configuration compatibility. In the block pipeline they no longer select global token budgets or different rule sets; compression strength is chosen per block.
+The legacy strength names `low`, `default`, `high`, and `xhigh` are still accepted, but no longer have any effect.
 
 ## Community
 

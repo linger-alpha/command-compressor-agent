@@ -1,6 +1,6 @@
 # Command Compressor for Agent
 
-![CCA 在命令输出进入 coding agent 前进行压缩](https://raw.githubusercontent.com/linger-alpha/command-compressor-agent/main/docs/assets/cca-hero.png)
+![CCA 在命令输出进入 coding agent 前进行压缩](assets/cca-hero.png)
 
 Command Compressor for Agent（`CCA`）致力于节省你的 token，通过规则而不是跟 Agent 说帮我省点 token。
 
@@ -162,7 +162,7 @@ npm 包只包含 `bin/`、`src/`、`rules/` 以及 npm 自动加入的 package m
 
 GitHub 仓库还在 `research/` 下开源了导入、脱敏、prompt、候选生成、独立评判、回放分析和 Harbor/Terminal-Bench 工具。生产代码不会导入或探测该目录，`npm run check:package` 会检查这一边界。
 
-旧的 `low`、`default`、`high` 和 `xhigh` 名称仍可使用，以兼容已有配置。在新的分块管线中，它们不再选择全局 token budget 或不同规则集；压缩强度由每个块自身的策略决定。
+旧的 `low`、`default`、`high` 和 `xhigh` 名称仍可使用，但已失效。
 
 ## 社区
 
